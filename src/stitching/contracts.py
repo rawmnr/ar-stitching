@@ -70,6 +70,7 @@ class ScenarioConfig:
     pixel_size: float
     scan_offsets: tuple[tuple[float, float], ...]
     tile_shape: tuple[int, int] | None = None
+    baseline_name: str = "mean"
     rotation_deg: tuple[float, ...] = (0.0,)
     reference_bias: float = 0.0
     gaussian_noise_std: float = 0.0
@@ -90,6 +91,7 @@ class ScenarioConfig:
             pixel_size=float(payload["pixel_size"]),
             scan_offsets=tuple(tuple(offset) for offset in payload["scan_offsets"]),
             tile_shape=None if payload.get("tile_shape") is None else tuple(payload["tile_shape"]),
+            baseline_name=str(payload.get("baseline_name", "mean")),
             rotation_deg=tuple(payload.get("rotation_deg", [0.0])),
             reference_bias=float(payload.get("reference_bias", 0.0)),
             gaussian_noise_std=float(payload.get("gaussian_noise_std", 0.0)),

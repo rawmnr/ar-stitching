@@ -6,7 +6,7 @@ import pytest
 
 from stitching.editable.baseline import baseline_integer_unshift_mean, baseline_integer_unshift_median
 from stitching.contracts import ReconstructionSurface, ScenarioConfig
-from stitching.harness.run_eval import run_baseline_eval, run_identity_eval
+from stitching.harness.run_eval import run_baseline_eval, run_identity_eval, run_median_baseline_eval
 from stitching.trusted.eval.metrics import build_eval_report
 from stitching.trusted.simulator.identity import simulate_identity_observations
 
@@ -137,3 +137,28 @@ def test_trusted_evaluation_requires_observed_support_mask() -> None:
 
     with pytest.raises(ValueError):
         build_eval_report(config, truth, candidate, runtime_sec=0.0)
+
+
+def test_harness_can_select_median_baseline() -> None:
+    report = run_median_baseline_eval(Path("scenarios/s04_outliers.yaml"))
+
+    assert report.signal_metrics["mae_on_valid_intersection"] >= 0.0
+
+
+def test_harness_rejects_unknown_baseline_name() -> None:
+    with pytest.raises(ValueError):
+        run_baseline_eval(Path("scenarios/s00_identity.yaml"), baseline_name="unknown")
+
+
+def test_harness_uses_declared_scenario_baseline_by_default() -> None:
+    default_report = run_baseline_eval(Path("scenarios/s08_outliers_median.yaml"))
+    explicit_report = run_baseline_eval(Path("scenarios/s08_outliers_median.yaml"), baseline_name="median")
+
+    assert default_report.signal_metrics == explicit_report.signal_metrics
+
+
+def test_harness_allows_explicit_override_of_declared_baseline() -> None:
+    median_report = run_baseline_eval(Path("scenarios/s08_outliers_median.yaml"))
+    mean_report = run_baseline_eval(Path("scenarios/s08_outliers_median.yaml"), baseline_name="mean")
+
+    assert median_report.signal_metrics["mae_on_valid_intersection"] <= mean_report.signal_metrics["mae_on_valid_intersection"]
