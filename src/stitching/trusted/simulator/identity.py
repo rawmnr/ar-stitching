@@ -10,6 +10,7 @@ from stitching.trusted.noise.models import add_gaussian_noise, add_outliers, app
 from stitching.trusted.scan.transforms import apply_integer_shift
 from stitching.trusted.surface.footprint import circular_pupil_mask
 from stitching.trusted.surface.generation import generate_identity_surface
+from stitching.trusted.validation import validate_observation_alignment
 
 
 def _integer_offset(offset_xy: tuple[float, float]) -> tuple[int, int]:
@@ -32,7 +33,7 @@ def simulate_identity_observations(
     truth = generate_identity_surface(config.grid_shape, config.pixel_size)
     detector_footprint = circular_pupil_mask(config.grid_shape)
     truth = SurfaceTruth(
-        z=np.array(truth.z, copy=True),
+        z=np.where(detector_footprint, truth.z, 0.0),
         valid_mask=np.array(detector_footprint, copy=True),
         pixel_size=truth.pixel_size,
         units=truth.units,
@@ -78,5 +79,6 @@ def simulate_identity_observations(
                 },
             )
         )
+        validate_observation_alignment(observations[-1])
 
     return truth, tuple(observations)

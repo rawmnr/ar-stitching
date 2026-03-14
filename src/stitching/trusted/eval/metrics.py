@@ -7,6 +7,18 @@ from collections import deque
 import numpy as np
 
 from stitching.contracts import EvalReport, ScenarioConfig, SubApertureObservation, SurfaceTruth
+from stitching.trusted.validation import validate_observation_alignment
+
+
+GEOMETRY_ACCEPTANCE_THRESHOLDS: dict[str, float] = {
+    "footprint_iou_min": 0.999,
+    "valid_pixel_recall_min": 0.999,
+    "valid_pixel_precision_min": 0.999,
+    "largest_component_ratio_min": 0.999,
+    "hole_ratio_max": 1e-6,
+}
+
+FLAT_TRUTH_STD_EPS = 1e-12
 
 
 def _largest_component_size(mask: np.ndarray) -> int:
@@ -68,9 +80,9 @@ def geometry_metrics(reference_mask: np.ndarray, candidate_mask: np.ndarray) -> 
     largest_component = _largest_component_size(candidate_mask)
 
     return {
-        "footprint_iou": 1.0 if union.sum() == 0 else float(intersection.sum()) / float(union.sum()),
-        "valid_pixel_recall": 1.0 if reference_count == 0 else float(intersection.sum()) / float(reference_count),
-        "valid_pixel_precision": 1.0 if candidate_count == 0 else float(intersection.sum()) / float(candidate_count),
+        "footprint_iou": 0.0 if union.sum() == 0 else float(intersection.sum()) / float(union.sum()),
+        "valid_pixel_recall": 0.0 if reference_count == 0 else float(intersection.sum()) / float(reference_count),
+        "valid_pixel_precision": 0.0 if candidate_count == 0 else float(intersection.sum()) / float(candidate_count),
         "largest_component_ratio": 0.0 if candidate_count == 0 else float(largest_component) / float(candidate_count),
         "hole_ratio": _hole_ratio(candidate_mask),
     }
@@ -81,9 +93,9 @@ def signal_metrics(reference: np.ndarray, candidate: np.ndarray, valid_intersect
 
     if not np.any(valid_intersection):
         return {
-            "rms_on_valid_intersection": 0.0,
-            "mae_on_valid_intersection": 0.0,
-            "hf_retention": 1.0,
+            "rms_on_valid_intersection": float("inf"),
+            "mae_on_valid_intersection": float("inf"),
+            "hf_retention": 0.0,
         }
 
     delta = candidate[valid_intersection] - reference[valid_intersection]
@@ -91,7 +103,7 @@ def signal_metrics(reference: np.ndarray, candidate: np.ndarray, valid_intersect
     mae = float(np.mean(np.abs(delta)))
     ref_std = float(np.std(reference[valid_intersection]))
     cand_std = float(np.std(candidate[valid_intersection]))
-    hf_retention = 1.0 if ref_std == 0.0 else cand_std / ref_std
+    hf_retention = 0.0 if ref_std <= FLAT_TRUTH_STD_EPS else cand_std / ref_std
     return {
         "rms_on_valid_intersection": rms,
         "mae_on_valid_intersection": mae,
@@ -107,9 +119,17 @@ def build_eval_report(
 ) -> EvalReport:
     """Combine geometry and signal metrics into an evaluation report."""
 
+    validate_observation_alignment(candidate)
     geom = geometry_metrics(truth.valid_mask, candidate.valid_mask)
     sig = signal_metrics(truth.z, candidate.z, truth.valid_mask & candidate.valid_mask)
-    accepted = geom["footprint_iou"] >= 0.999 and sig["mae_on_valid_intersection"] <= 1e-12
+    accepted = (
+        geom["footprint_iou"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["footprint_iou_min"]
+        and geom["valid_pixel_recall"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["valid_pixel_recall_min"]
+        and geom["valid_pixel_precision"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["valid_pixel_precision_min"]
+        and geom["largest_component_ratio"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["largest_component_ratio_min"]
+        and geom["hole_ratio"] <= GEOMETRY_ACCEPTANCE_THRESHOLDS["hole_ratio_max"]
+        and sig["mae_on_valid_intersection"] <= 1e-12
+    )
     return EvalReport(
         scenario_id=config.scenario_id,
         geometry_metrics=geom,

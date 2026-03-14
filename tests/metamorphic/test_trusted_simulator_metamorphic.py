@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import numpy as np
+
 from stitching.contracts import ScenarioConfig
 from stitching.trusted.eval.metrics import signal_metrics
 from stitching.trusted.simulator.identity import simulate_identity_observations
@@ -62,3 +64,33 @@ def test_zero_bias_noise_outliers_and_retrace_match_identity_output() -> None:
     assert (truth_identity.valid_mask == truth_zero.valid_mask).all()
     assert (identity_obs[0].valid_mask == zero_obs[0].valid_mask).all()
     assert (identity_obs[0].z == zero_obs[0].z).all()
+
+
+def test_signal_metrics_degrade_on_non_flat_truth_surface() -> None:
+    config = ScenarioConfig(
+        scenario_id="nonflat",
+        description="nonflat",
+        grid_shape=(11, 11),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+        seed=8,
+    )
+    noisy_config = ScenarioConfig(
+        scenario_id="nonflat_noisy",
+        description="nonflat noisy",
+        grid_shape=(11, 11),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+        gaussian_noise_std=0.05,
+        seed=8,
+    )
+
+    truth, clean_obs = simulate_identity_observations(config)
+    _, noisy_obs = simulate_identity_observations(noisy_config)
+    valid = truth.valid_mask & clean_obs[0].valid_mask
+
+    clean_metrics = signal_metrics(truth.z, clean_obs[0].z, valid)
+    noisy_metrics = signal_metrics(truth.z, noisy_obs[0].z, valid)
+
+    assert np.std(truth.z[valid]) > 0.0
+    assert noisy_metrics["rms_on_valid_intersection"] > clean_metrics["rms_on_valid_intersection"]

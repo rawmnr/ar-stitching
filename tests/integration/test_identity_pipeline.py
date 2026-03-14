@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import numpy as np
+
 from stitching.contracts import ScenarioConfig
 from stitching.harness.run_eval import run_identity_eval
 from stitching.trusted.simulator.identity import simulate_identity_observations
@@ -23,3 +25,4 @@ def test_identity_simulator_returns_single_observation_matching_truth() -> None:
     assert (observations[0].z == truth.z).all()
     assert (observations[0].valid_mask == truth.valid_mask).all()
     assert observations[0].valid_mask.sum() < observations[0].valid_mask.size
+    assert not np.allclose(truth.z, 0.0)

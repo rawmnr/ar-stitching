@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from stitching.contracts import ScenarioConfig
 from stitching.trusted.simulator.identity import simulate_identity_observations
+from stitching.trusted.validation import validate_observation_alignment
 
 
 def test_zero_effect_hooks_preserve_identity_for_multiple_seeds() -> None:
@@ -36,4 +39,21 @@ def test_shifted_observation_keeps_value_and_mask_alignment_for_multiple_offsets
 
         assert observation.z.shape == observation.valid_mask.shape
         assert (observation.z[~observation.valid_mask] == 0.0).all()
+        validate_observation_alignment(observation)
 
+
+def test_validation_helper_rejects_nonzero_values_outside_mask() -> None:
+    config = ScenarioConfig(
+        scenario_id="bad",
+        description="bad",
+        grid_shape=(7, 7),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+        seed=0,
+    )
+    _, observations = simulate_identity_observations(config)
+    bad_observation = observations[0]
+    bad_observation.z[0, 0] = 1.0
+
+    with pytest.raises(ValueError):
+        validate_observation_alignment(bad_observation)
