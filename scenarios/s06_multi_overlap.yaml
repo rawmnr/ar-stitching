@@ -1,0 +1,13 @@
+scenario_id: s06_multi_overlap
+description: Two complementary shifted observations for naive multi-observation fusion.
+grid_shape: [8, 8]
+pixel_size: 1.0
+scan_offsets:
+  - [1.0, 0.0]
+  - [-1.0, 0.0]
+rotation_deg: [0.0, 0.0]
+reference_bias: 0.0
+gaussian_noise_std: 0.0
+outlier_fraction: 0.0
+retrace_error: 0.0
+seed: 6

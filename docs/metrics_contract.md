@@ -23,9 +23,13 @@ Geometry is a blocking acceptance layer. A candidate must first preserve the val
 Current acceptance logic in the scaffold is:
 
 - `footprint_iou >= 0.999`
+- `valid_pixel_recall >= 0.999`
+- `valid_pixel_precision >= 0.999`
+- `largest_component_ratio >= 0.999`
+- `hole_ratio <= 1e-6`
 - `mae_on_valid_intersection <= 1e-12`
 
-The repository policy is stricter than RMS-only scoring even when other geometry thresholds are not yet encoded as hard failures.
+These gates are intentionally conservative for the current deterministic scaffold.
 
 ## Signal Metrics
 
@@ -48,7 +52,6 @@ For this repository, geometry and footprint integrity are first-order constraint
 
 ## Known Current Limitations
 
-- Only a subset of the intended acceptance policy is enforced in code today.
 - `hf_retention` is currently a simple variance ratio proxy.
 - Metrics assume exact pixel-grid alignment; no sub-pixel registration logic exists yet.
-- The current identity-phase truth surface is simple, so some signal metrics are not yet stressed by rich structure.
+- The current truth surface is still low-order and deterministic, so richer optical failure modes are not yet stressed.

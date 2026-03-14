@@ -17,6 +17,7 @@ This document defines the current trusted simulator behavior for the repository 
 
 - `SurfaceTruth` is the global reference field for evaluation.
 - `SubApertureObservation` is a detector-frame measurement after footprinting and integer translation.
+- `ReconstructionSurface` is intended to be a global-frame reconstruction aligned to the truth grid.
 - `valid_mask` marks which pixels are physically observed and valid for metric computation.
 
 ## `valid_mask` Semantics
@@ -43,8 +44,10 @@ This document defines the current trusted simulator behavior for the repository 
 
 ## Current Limitations
 
-- The truth surface is still a simple identity surface.
+- The truth surface is a deterministic low-order test surface, not a realistic optical process model.
 - The footprint is circular but fixed and centered before translation.
 - Translation is integer-only; no sub-pixel motion model exists yet.
 - Rotation is not physically applied.
 - Instrument effects are placeholder additive hooks, not calibrated physical models.
+- Observation arrays and reconstruction arrays still share the same canvas shape in this scaffold.
+- Shifted observations can lose border coverage by clipping on that shared canvas.
