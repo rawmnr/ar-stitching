@@ -76,7 +76,7 @@ def run_baseline_eval(scenario_path: str | Path, baseline_name: str | None = Non
 
 
 def run_median_baseline_eval(scenario_path: str | Path) -> EvalReport:
-    """Convenience wrapper for the robust median baseline."""
+    """Convenience wrapper for the experimental median baseline."""
 
     return run_baseline_eval(scenario_path, baseline_name="median")
 

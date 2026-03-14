@@ -49,6 +49,32 @@ def test_even_tile_places_cleanly_on_odd_grid() -> None:
     assert (local_x.start, local_x.stop) == (0, 3)
 
 
+def test_odd_tile_clips_cleanly_near_even_grid_border() -> None:
+    global_y, global_x, local_y, local_x = placement_slices(
+        global_shape=(4, 4),
+        tile_shape=(3, 3),
+        center_xy=(0.0, 0.0),
+    )
+
+    assert (global_y.start, global_y.stop) == (0, 2)
+    assert (global_x.start, global_x.stop) == (0, 2)
+    assert (local_y.start, local_y.stop) == (1, 3)
+    assert (local_x.start, local_x.stop) == (1, 3)
+
+
+def test_even_tile_clips_cleanly_near_odd_grid_border() -> None:
+    global_y, global_x, local_y, local_x = placement_slices(
+        global_shape=(5, 5),
+        tile_shape=(4, 4),
+        center_xy=(0.5, 0.5),
+    )
+
+    assert (global_y.start, global_y.stop) == (0, 3)
+    assert (global_x.start, global_x.stop) == (0, 3)
+    assert (local_y.start, local_y.stop) == (1, 4)
+    assert (local_x.start, local_x.stop) == (1, 4)
+
+
 def test_incompatible_even_tile_center_raises() -> None:
     with pytest.raises(ValueError):
         placement_slices(

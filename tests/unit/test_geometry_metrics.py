@@ -4,7 +4,9 @@ import numpy as np
 from scipy import ndimage
 
 from stitching.contracts import ScenarioConfig
-from stitching.trusted.eval.metrics import geometry_metrics, signal_acceptance_threshold, signal_metrics
+from stitching.contracts import ReconstructionSurface, SurfaceTruth
+from stitching.trusted.eval.metrics import build_eval_report, geometry_metrics, signal_acceptance_threshold, signal_metrics
+from stitching.trusted.noise.models import outlier_magnitude_scale
 from stitching.trusted.scan.transforms import apply_integer_shift, rotation_matrix_deg
 
 
@@ -185,5 +187,46 @@ def test_signal_acceptance_threshold_scales_with_noise_and_outliers() -> None:
         outlier_fraction=0.05,
         retrace_error=0.01,
     )
+    reference = np.array(
+        [
+            [0.0, 1.0, 2.0],
+            [1.0, 2.0, 3.0],
+            [2.0, 3.0, 4.0],
+        ],
+        dtype=float,
+    )
+    valid_mask = np.ones_like(reference, dtype=bool)
 
-    assert math.isclose(signal_acceptance_threshold(config), 0.12)
+    expected = 3.0 * config.gaussian_noise_std + config.outlier_fraction * outlier_magnitude_scale(reference, valid_mask) + abs(config.retrace_error)
+    assert math.isclose(signal_acceptance_threshold(config, reference, valid_mask), expected, rel_tol=1e-9)
+
+
+def test_eval_report_accepts_error_within_outlier_budget() -> None:
+    truth_z = np.array(
+        [
+            [0.0, 1.0, 2.0],
+            [1.0, 2.0, 3.0],
+            [2.0, 3.0, 4.0],
+        ],
+        dtype=float,
+    )
+    truth = SurfaceTruth(z=truth_z, valid_mask=np.ones((3, 3), dtype=bool), pixel_size=1.0)
+    config = ScenarioConfig(
+        scenario_id="outlier_budget",
+        description="outlier budget",
+        grid_shape=(3, 3),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+        outlier_fraction=0.1,
+    )
+    threshold = signal_acceptance_threshold(config, truth.z, truth.valid_mask)
+    candidate = ReconstructionSurface(
+        z=truth.z + (0.5 * threshold),
+        valid_mask=np.ones((3, 3), dtype=bool),
+        source_observation_ids=("obs",),
+        observed_support_mask=np.ones((3, 3), dtype=bool),
+    )
+
+    report = build_eval_report(config, truth, candidate, runtime_sec=0.0)
+
+    assert report.accepted is True

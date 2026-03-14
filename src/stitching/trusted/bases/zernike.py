@@ -143,20 +143,22 @@ def _generate_with_internal(coefficients: np.ndarray, shape: tuple[int, int], in
 
 
 def _resolve_backend(backend: str) -> str:
-    """Resolve an installed optional backend."""
+    """Resolve an installed optional backend.
+
+    `auto` currently considers only fully wired backends. Prysm is intentionally
+    excluded until indexed coefficient generation is implemented end-to-end.
+    """
 
     if backend != "auto":
         return backend
 
-    return "internal"
-
-    for candidate in ("optiland", "prysm"):
+    for candidate in ("optiland",):
         try:
             import_module(candidate)
             return candidate
         except ImportError:
             continue
-    raise ImportError("No optional Zernike backend is installed. Install the 'optics' or 'zernike_alt' extra.")
+    return "internal"
 
 
 def _generate_with_optiland(coefficients: np.ndarray, shape: tuple[int, int], indexing: str) -> np.ndarray:
@@ -175,23 +177,12 @@ def _generate_with_optiland(coefficients: np.ndarray, shape: tuple[int, int], in
 
 
 def _generate_with_prysm(coefficients: np.ndarray, shape: tuple[int, int], indexing: str) -> np.ndarray:
-    """Call a Prysm backend if available."""
+    """Fail explicitly until the Prysm adapter is fully wired."""
 
-    polynomials = import_module("prysm.polynomials")
-    x, y, mask = _normalized_pupil_grid(shape)
-    surface = np.zeros(shape, dtype=float)
-
-    for term_index, coefficient in enumerate(np.asarray(coefficients, dtype=float).ravel(), start=1):
-        if coefficient == 0.0:
-            continue
-        if indexing not in {"noll", "fringe", "ansi"}:
-            raise ValueError(f"Unsupported Prysm indexing '{indexing}'.")
-        if hasattr(polynomials, "zernike_nm"):
-            # Adapter intentionally keeps the interface narrow; exact index mapping is backend-specific.
-            raise NotImplementedError("Prysm backend support is not wired yet for indexed coefficient generation.")
-        raise ImportError("Installed Prysm package does not expose the expected zernike API.")
-
-    return np.where(mask, surface, 0.0)
+    raise NotImplementedError(
+        "Prysm backend is not part of the public trusted API yet. "
+        "Use backend='internal', backend='optiland', or backend='auto'."
+    )
 
 
 def generate_zernike_surface(
@@ -200,7 +191,15 @@ def generate_zernike_surface(
     indexing: str = "noll",
     backend: str = "auto",
 ) -> np.ndarray:
-    """Generate a circular-pupil surface using an optional backend adapter."""
+    """Generate a circular-pupil surface using a supported backend adapter.
+
+    Publicly supported backends are:
+    - `internal`
+    - `optiland` if installed
+    - `auto`, which currently resolves to `optiland` or falls back to `internal`
+
+    `prysm` remains intentionally unavailable until its adapter is fully implemented.
+    """
 
     resolved_backend = _resolve_backend(backend)
     coeffs = np.asarray(coefficients, dtype=float)

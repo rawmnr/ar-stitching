@@ -176,6 +176,15 @@ def test_harness_can_select_median_baseline() -> None:
     assert report.signal_metrics["mae_on_valid_intersection"] >= 0.0
 
 
+def test_median_baseline_is_marked_experimental_in_metadata() -> None:
+    config = ScenarioConfig.from_yaml(Path("scenarios/s04_outliers.yaml"))
+    _, observations = simulate_identity_observations(config)
+
+    reconstruction = baseline_integer_unshift_median(observations)
+
+    assert reconstruction.metadata["baseline_experimental"] is True
+
+
 def test_harness_rejects_unknown_baseline_name() -> None:
     with pytest.raises(ValueError):
         run_baseline_eval(Path("scenarios/s00_identity.yaml"), baseline_name="unknown")

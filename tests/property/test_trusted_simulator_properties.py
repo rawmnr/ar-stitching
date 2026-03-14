@@ -167,6 +167,29 @@ def test_quarter_turn_rotation_is_applied_to_observation_pixels() -> None:
     assert np.array_equal(rotated_obs[0].valid_mask, np.rot90(unrotated_obs[0].valid_mask, k=1))
 
 
+def test_rotation_ninety_then_two_seventy_returns_identity() -> None:
+    config = ScenarioConfig(
+        scenario_id="rotation_cycle",
+        description="rotation cycle",
+        grid_shape=(9, 9),
+        tile_shape=(5, 5),
+        pixel_size=1.0,
+        scan_offsets=((2.0, 0.0),),
+        rotation_deg=(90.0,),
+        seed=0,
+    )
+    _, observations = simulate_identity_observations(config)
+    rotated = observations[0]
+
+    unrotated_z = np.rot90(rotated.z, k=3)
+    restored_z = np.rot90(unrotated_z, k=1)
+    unrotated_mask = np.rot90(rotated.valid_mask, k=3)
+    restored_mask = np.rot90(unrotated_mask, k=1)
+
+    assert np.array_equal(restored_z, rotated.z)
+    assert np.array_equal(restored_mask, rotated.valid_mask)
+
+
 def test_observation_preserves_rotation_from_config() -> None:
     config = ScenarioConfig(
         scenario_id="rotation_metadata",

@@ -16,6 +16,7 @@ Current phase: foundation only.
 - Placeholder trusted modules with testable default behavior
 - Canonical scenario YAML files for early experiments
 - Initial identity-focused tests and geometry invariants
+- Mean tile-fusion baseline as the primary reference, with an experimental median baseline kept for comparison only
 
 ## Not implemented yet
 

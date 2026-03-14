@@ -34,3 +34,17 @@ def test_identity_surface_is_nonflat_legendre_surface() -> None:
 
     assert truth.metadata["surface_model"] == "legendre_structured_low_order"
     assert np.std(truth.z) > 0.0
+
+
+def test_tensor_legendre_basis_is_approximately_discrete_orthogonal_on_small_grid() -> None:
+    basis = sample_legendre_basis_2d(shape=(9, 9), max_degree_y=2, max_degree_x=2)
+    flattened = basis.reshape(9, -1)
+    gram = flattened @ flattened.T
+    diagonal = np.diag(gram)
+
+    assert np.all(diagonal > 0.0)
+    for row in range(gram.shape[0]):
+        for col in range(gram.shape[1]):
+            if row == col:
+                continue
+            assert abs(gram[row, col]) < 0.25 * np.sqrt(diagonal[row] * diagonal[col])

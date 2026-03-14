@@ -51,12 +51,14 @@ def _reconstruction_metadata(
     observation_list: list[SubApertureObservation],
     baseline_name: str,
     centers_xy: list[tuple[float, float]],
+    experimental: bool = False,
 ) -> dict[str, object]:
     """Build shared reconstruction metadata."""
 
     first = observation_list[0]
     return {
         "baseline": baseline_name,
+        "baseline_experimental": experimental,
         "reconstruction_frame": "global_truth",
         "tile_centers_xy": centers_xy[0] if len(centers_xy) == 1 else tuple(centers_xy),
         "num_observations_used": len(observation_list),
@@ -113,7 +115,11 @@ def baseline_integer_unshift_mean(
 def baseline_integer_unshift_median(
     observations: Iterable[SubApertureObservation],
 ) -> ReconstructionSurface:
-    """Reconstruct a global surface by placing local tiles and taking the median on overlaps."""
+    """Experimental overlap fusion by per-pixel median on placed tiles.
+
+    This baseline is kept for robustness comparisons, but it is not treated as a
+    scalable production-like reference because it stores per-pixel sample lists.
+    """
 
     observation_list = _validate_observation_list(observations)
     global_shape = observation_list[0].global_shape
@@ -139,7 +145,12 @@ def baseline_integer_unshift_median(
         valid_mask=valid_mask,
         source_observation_ids=tuple(source_observation_ids),
         observed_support_mask=observed_support_mask,
-        metadata=_reconstruction_metadata(observation_list, "integer_tile_place_median", centers_xy),
+        metadata=_reconstruction_metadata(
+            observation_list,
+            "integer_tile_place_median",
+            centers_xy,
+            experimental=True,
+        ),
     )
 
 

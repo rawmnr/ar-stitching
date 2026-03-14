@@ -20,7 +20,6 @@ GEOMETRY_ACCEPTANCE_THRESHOLDS: dict[str, float] = {
 
 FLAT_TRUTH_STD_EPS = 1e-12
 DEFAULT_SIGNAL_ACCEPTANCE_EPS = 1e-12
-SIMULATOR_OUTLIER_MAGNITUDE = 1.0
 HIGH_FREQUENCY_ENERGY_EPS = 1e-12
 EMPTY_INTERSECTION_PENALTY_FLOOR = 1.0
 
@@ -126,11 +125,20 @@ def signal_metrics(reference: np.ndarray, candidate: np.ndarray, valid_intersect
     }
 
 
-def signal_acceptance_threshold(config: ScenarioConfig) -> float:
-    """Return a conservative MAE budget implied by declared irreducible corruption."""
+def signal_acceptance_threshold(
+    config: ScenarioConfig,
+    reference: np.ndarray | None = None,
+    valid_mask: np.ndarray | None = None,
+) -> float:
+    """Return a conservative MAE budget implied by declared irreducible corruption.
+
+    Outlier budget is modeled in one place only: as `outlier_fraction` times a
+    signal scale derived from the trusted reference surface when available.
+    """
 
     noise_budget = 3.0 * float(config.gaussian_noise_std)
-    outlier_budget = float(config.outlier_fraction) * SIMULATOR_OUTLIER_MAGNITUDE
+    outlier_scale = 1.0 if reference is None else outlier_magnitude_scale(reference, valid_mask)
+    outlier_budget = float(config.outlier_fraction) * outlier_scale
     retrace_budget = abs(float(config.retrace_error))
     return max(DEFAULT_SIGNAL_ACCEPTANCE_EPS, noise_budget + outlier_budget + retrace_budget)
 
@@ -149,12 +157,7 @@ def build_eval_report(
     support_violation = bool(np.any(candidate.valid_mask & ~candidate.observed_support_mask))
     geom = geometry_metrics(truth.valid_mask, candidate.valid_mask)
     sig = signal_metrics(truth.z, candidate.z, truth.valid_mask & candidate.valid_mask)
-    mae_threshold = max(
-        signal_acceptance_threshold(config),
-        DEFAULT_SIGNAL_ACCEPTANCE_EPS,
-    )
-    if config.outlier_fraction > 0.0:
-        mae_threshold += float(config.outlier_fraction) * outlier_magnitude_scale(truth.z, truth.valid_mask)
+    mae_threshold = signal_acceptance_threshold(config, truth.z, truth.valid_mask)
     accepted = (
         not support_violation
         and

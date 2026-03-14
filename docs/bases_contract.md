@@ -27,10 +27,13 @@ This document defines how trusted basis-driven surface generation is structured 
 
 - `legendre.py` is mandatory and trusted.
 - `zernike.py` is an adapter layer only.
-- If no optional Zernike backend is installed, the adapter must fail explicitly with a clear `ImportError`.
+- `internal` Zernike generation is always available in the default install.
+- `optiland` is the only optional backend currently considered by `backend="auto"`.
+- `prysm` is not yet a supported public backend; requests for it should fail explicitly until the adapter is fully wired.
 
 ## Current Limitations
 
-- Only Legendre basis generation is guaranteed to be available in the default install.
+- Only Legendre and internal Zernike generation are guaranteed to be available in the default install.
 - No Zernike fit pipeline is wired into the simulator yet.
 - No backend-specific objects are allowed to leak outside `trusted/bases/`.
+- Prysm remains an installation extra, not an active trusted backend.
