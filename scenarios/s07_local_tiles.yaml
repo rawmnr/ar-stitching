@@ -1,0 +1,17 @@
+scenario_id: s07_local_tiles
+description: Five local detector tiles placed on a 3x3-style pattern for global fusion.
+grid_shape: [9, 9]
+tile_shape: [5, 5]
+pixel_size: 1.0
+scan_offsets:
+  - [0.0, 0.0]
+  - [-2.0, -2.0]
+  - [2.0, -2.0]
+  - [-2.0, 2.0]
+  - [2.0, 2.0]
+rotation_deg: [0.0, 0.0, 0.0, 0.0, 0.0]
+reference_bias: 0.0
+gaussian_noise_std: 0.0
+outlier_fraction: 0.0
+retrace_error: 0.0
+seed: 7

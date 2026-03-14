@@ -16,7 +16,7 @@ This document defines the current trusted simulator behavior for the repository 
 ## Data Objects
 
 - `SurfaceTruth` is the global reference field for evaluation.
-- `SubApertureObservation` is a detector-frame measurement after footprinting and integer translation.
+- `SubApertureObservation` is a local detector tile with known pose in the global frame.
 - `ReconstructionSurface` is intended to be a global-frame reconstruction aligned to the truth grid.
 - `valid_mask` marks which pixels are physically observed and valid for metric computation.
 
@@ -30,11 +30,10 @@ This document defines the current trusted simulator behavior for the repository 
 ## Order of Simulation Operations
 
 1. Create the global truth surface.
-2. Create a centered circular detector footprint.
-3. Apply the footprint to form detector-frame values and detector-frame validity.
-4. Apply the same integer translation to both values and `valid_mask`.
-5. Apply reference bias, nuisance terms, Gaussian noise, outliers, and retrace hook.
-6. Zero all pixels outside `valid_mask`.
+2. Choose a local detector tile shape and tile center in the global frame.
+3. Extract the corresponding global window into a local tile with integer clipping.
+4. Apply reference bias, nuisance terms, Gaussian noise, outliers, and retrace hook on the local tile.
+5. Zero all pixels outside `valid_mask`.
 
 ## Determinism
 
@@ -45,9 +44,8 @@ This document defines the current trusted simulator behavior for the repository 
 ## Current Limitations
 
 - The truth surface is a deterministic low-order test surface, not a realistic optical process model.
-- The footprint is circular but fixed and centered before translation.
+- Detector tiles are integer-placed local windows, not physically sampled sub-apertures.
 - Translation is integer-only; no sub-pixel motion model exists yet.
 - Rotation is not physically applied.
 - Instrument effects are placeholder additive hooks, not calibrated physical models.
-- Observation arrays and reconstruction arrays still share the same canvas shape in this scaffold.
-- Shifted observations can lose border coverage by clipping on that shared canvas.
+- Reconstruction is still a simple place-and-average baseline.

@@ -27,11 +27,14 @@ class SurfaceTruth:
 
 @dataclass(frozen=True)
 class SubApertureObservation:
-    """Single sub-aperture measurement in detector coordinates."""
+    """Single local detector tile with known pose in the global frame."""
 
     observation_id: str
     z: ArrayF64
     valid_mask: ArrayBool
+    tile_shape: tuple[int, int]
+    center_xy: tuple[float, float]
+    global_shape: tuple[int, int]
     translation_xy: tuple[float, float]
     rotation_deg: float
     reference_bias: float = 0.0
@@ -58,6 +61,7 @@ class ScenarioConfig:
     grid_shape: tuple[int, int]
     pixel_size: float
     scan_offsets: tuple[tuple[float, float], ...]
+    tile_shape: tuple[int, int] | None = None
     rotation_deg: tuple[float, ...] = (0.0,)
     reference_bias: float = 0.0
     gaussian_noise_std: float = 0.0
@@ -77,6 +81,7 @@ class ScenarioConfig:
             grid_shape=tuple(payload["grid_shape"]),
             pixel_size=float(payload["pixel_size"]),
             scan_offsets=tuple(tuple(offset) for offset in payload["scan_offsets"]),
+            tile_shape=None if payload.get("tile_shape") is None else tuple(payload["tile_shape"]),
             rotation_deg=tuple(payload.get("rotation_deg", [0.0])),
             reference_bias=float(payload.get("reference_bias", 0.0)),
             gaussian_noise_std=float(payload.get("gaussian_noise_std", 0.0)),
@@ -85,6 +90,12 @@ class ScenarioConfig:
             seed=int(payload.get("seed", 0)),
             metadata=dict(payload.get("metadata", {})),
         )
+
+    @property
+    def effective_tile_shape(self) -> tuple[int, int]:
+        """Return the configured detector tile shape or default to the global grid."""
+
+        return self.grid_shape if self.tile_shape is None else self.tile_shape
 
 
 @dataclass(frozen=True)

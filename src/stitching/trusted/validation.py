@@ -22,6 +22,10 @@ def validate_observation_alignment(observation: SubApertureObservation) -> None:
     """Enforce shape and mask/value alignment for trusted observations."""
 
     validate_surface_alignment(observation.z, observation.valid_mask)
+    if observation.z.shape != observation.tile_shape:
+        raise ValueError("Observation tile_shape must match observation array shape.")
+    if observation.global_shape[0] < observation.tile_shape[0] or observation.global_shape[1] < observation.tile_shape[1]:
+        raise ValueError("Observation tile_shape must fit inside global_shape.")
 
 
 def validate_reconstruction_alignment(reconstruction: ReconstructionSurface) -> None:

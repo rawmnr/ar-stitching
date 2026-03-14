@@ -38,6 +38,7 @@ def test_shifted_observation_keeps_value_and_mask_alignment_for_multiple_offsets
         observation = observations[0]
 
         assert observation.z.shape == observation.valid_mask.shape
+        assert observation.z.shape == observation.tile_shape
         assert (observation.z[~observation.valid_mask] == 0.0).all()
         validate_observation_alignment(observation)
 
@@ -65,13 +66,32 @@ def test_validation_helper_rejects_nonzero_values_outside_mask() -> None:
         scenario_id="bad",
         description="bad",
         grid_shape=(7, 7),
+        tile_shape=(5, 5),
         pixel_size=1.0,
-        scan_offsets=((0.0, 0.0),),
+        scan_offsets=((3.0, 0.0),),
         seed=0,
     )
     _, observations = simulate_identity_observations(config)
     bad_observation = observations[0]
-    bad_observation.z[0, 0] = 1.0
+    bad_observation.z[0, 4] = 1.0
 
     with pytest.raises(ValueError):
         validate_observation_alignment(bad_observation)
+
+
+def test_local_tile_observation_is_smaller_than_global_grid() -> None:
+    config = ScenarioConfig(
+        scenario_id="local_tile",
+        description="local tile",
+        grid_shape=(9, 9),
+        tile_shape=(5, 5),
+        pixel_size=1.0,
+        scan_offsets=((2.0, 0.0),),
+        seed=0,
+    )
+    _, observations = simulate_identity_observations(config)
+    observation = observations[0]
+
+    assert observation.tile_shape == (5, 5)
+    assert observation.z.shape == (5, 5)
+    assert observation.global_shape == (9, 9)
