@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from importlib import import_module
-from typing import Any
 
 import numpy as np
+from scipy.special import factorial
 
 
 def _normalized_pupil_grid(shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -19,11 +19,136 @@ def _normalized_pupil_grid(shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarr
     return x, y, mask
 
 
+def _polar_pupil_grid(shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return normalized polar coordinates and a unit-disk mask."""
+
+    x, y, mask = _normalized_pupil_grid(shape)
+    rho = np.sqrt(x**2 + y**2)
+    theta = np.arctan2(y, x)
+    return rho, theta, mask
+
+
+def _ansi_pairs(num_terms: int) -> list[tuple[int, int]]:
+    """Enumerate ANSI/OSA Zernike (n, m) pairs."""
+
+    pairs: list[tuple[int, int]] = []
+    n = 0
+    while len(pairs) < num_terms:
+        for m in range(-n, n + 1, 2):
+            pairs.append((n, m))
+            if len(pairs) == num_terms:
+                break
+        n += 1
+    return pairs
+
+
+def _noll_pairs(num_terms: int) -> list[tuple[int, int]]:
+    """Enumerate Noll Zernike (n, m) pairs."""
+
+    pairs: list[tuple[int, int]] = []
+    n = 0
+    while len(pairs) < num_terms:
+        if n % 2 == 0:
+            ordered_m = [0]
+            for abs_m in range(2, n + 1, 2):
+                ordered_m.extend((-abs_m, abs_m))
+        else:
+            ordered_m = []
+            for abs_m in range(1, n + 1, 2):
+                ordered_m.extend((-abs_m, abs_m))
+        for m in ordered_m:
+            pairs.append((n, m))
+            if len(pairs) == num_terms:
+                break
+        n += 1
+    return pairs
+
+
+def _fringe_pairs(num_terms: int) -> list[tuple[int, int]]:
+    """Enumerate a simple Fringe-style ordering."""
+
+    pairs: list[tuple[int, int]] = []
+    n = 0
+    while len(pairs) < num_terms:
+        ordered_m = [0] if n % 2 == 0 else []
+        for abs_m in range(1 if n % 2 else 2, n + 1, 2):
+            ordered_m.extend((abs_m, -abs_m))
+        for m in ordered_m:
+            pairs.append((n, m))
+            if len(pairs) == num_terms:
+                break
+        n += 1
+    return pairs
+
+
+def _index_pairs(indexing: str, num_terms: int) -> list[tuple[int, int]]:
+    """Resolve coefficient indexing to (n, m) mode pairs."""
+
+    if indexing == "ansi":
+        return _ansi_pairs(num_terms)
+    if indexing == "noll":
+        return _noll_pairs(num_terms)
+    if indexing == "fringe":
+        return _fringe_pairs(num_terms)
+    raise ValueError(f"Unsupported Zernike indexing '{indexing}'.")
+
+
+def _radial_polynomial(n: int, m: int, rho: np.ndarray) -> np.ndarray:
+    """Evaluate the radial Zernike polynomial."""
+
+    abs_m = abs(m)
+    if (n - abs_m) % 2 != 0:
+        return np.zeros_like(rho, dtype=float)
+
+    radial = np.zeros_like(rho, dtype=float)
+    max_k = (n - abs_m) // 2
+    for k in range(max_k + 1):
+        coefficient = (
+            (-1.0) ** k
+            * factorial(n - k, exact=False)
+            / (
+                factorial(k, exact=False)
+                * factorial((n + abs_m) // 2 - k, exact=False)
+                * factorial((n - abs_m) // 2 - k, exact=False)
+            )
+        )
+        radial = radial + coefficient * rho ** (n - 2 * k)
+    return radial
+
+
+def _zernike_mode(n: int, m: int, rho: np.ndarray, theta: np.ndarray) -> np.ndarray:
+    """Evaluate one real-valued Zernike mode on a polar grid."""
+
+    radial = _radial_polynomial(n, m, rho)
+    if m == 0:
+        return radial
+    if m > 0:
+        return radial * np.cos(m * theta)
+    return radial * np.sin(abs(m) * theta)
+
+
+def _generate_with_internal(coefficients: np.ndarray, shape: tuple[int, int], indexing: str) -> np.ndarray:
+    """Generate Zernike surfaces with an internal SciPy-backed implementation."""
+
+    coeffs = np.asarray(coefficients, dtype=float).ravel()
+    rho, theta, mask = _polar_pupil_grid(shape)
+    surface = np.zeros(shape, dtype=float)
+
+    for coefficient, (n, m) in zip(coeffs, _index_pairs(indexing, len(coeffs)), strict=False):
+        if coefficient == 0.0:
+            continue
+        surface = surface + float(coefficient) * _zernike_mode(n, m, rho, theta)
+
+    return np.where(mask, surface, 0.0)
+
+
 def _resolve_backend(backend: str) -> str:
     """Resolve an installed optional backend."""
 
     if backend != "auto":
         return backend
+
+    return "internal"
 
     for candidate in ("optiland", "prysm"):
         try:
@@ -80,6 +205,8 @@ def generate_zernike_surface(
     resolved_backend = _resolve_backend(backend)
     coeffs = np.asarray(coefficients, dtype=float)
 
+    if resolved_backend == "internal":
+        return _generate_with_internal(coeffs, shape, indexing)
     if resolved_backend == "optiland":
         return _generate_with_optiland(coeffs, shape, indexing)
     if resolved_backend == "prysm":

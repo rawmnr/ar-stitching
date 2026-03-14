@@ -1,8 +1,10 @@
 import math
 
 import numpy as np
+from scipy import ndimage
 
-from stitching.trusted.eval.metrics import geometry_metrics, signal_metrics
+from stitching.contracts import ScenarioConfig
+from stitching.trusted.eval.metrics import geometry_metrics, signal_acceptance_threshold, signal_metrics
 from stitching.trusted.scan.transforms import apply_integer_shift, rotation_matrix_deg
 
 
@@ -102,8 +104,10 @@ def test_empty_valid_intersection_is_not_perfect_signal() -> None:
 
     metrics = signal_metrics(reference, candidate, empty_intersection)
 
-    assert math.isinf(metrics["rms_on_valid_intersection"])
-    assert math.isinf(metrics["mae_on_valid_intersection"])
+    assert math.isfinite(metrics["rms_on_valid_intersection"])
+    assert math.isfinite(metrics["mae_on_valid_intersection"])
+    assert metrics["rms_on_valid_intersection"] >= 1.0
+    assert metrics["mae_on_valid_intersection"] >= 1.0
     assert metrics["hf_retention"] == 0.0
 
 
@@ -115,3 +119,71 @@ def test_hf_retention_on_near_flat_truth_is_not_reported_as_perfect() -> None:
     metrics = signal_metrics(reference, candidate, valid)
 
     assert metrics["hf_retention"] == 0.0
+
+
+def test_hf_retention_detects_blur_on_non_flat_truth() -> None:
+    reference = np.zeros((7, 7), dtype=float)
+    reference[3, 3] = 1.0
+    candidate = np.array(reference, copy=True)
+    candidate[3, 3] = 0.25
+    candidate[2, 3] = 0.1875
+    candidate[4, 3] = 0.1875
+    candidate[3, 2] = 0.1875
+    candidate[3, 4] = 0.1875
+    valid = np.ones((7, 7), dtype=bool)
+
+    metrics = signal_metrics(reference, candidate, valid)
+
+    assert metrics["hf_retention"] < 1.0
+
+
+def test_hf_retention_detects_high_frequency_noise_injection() -> None:
+    yy, xx = np.indices((7, 7))
+    reference = xx.astype(float) + yy.astype(float)
+    candidate = reference.copy()
+    candidate[1::2, 1::2] += 0.5
+    valid = np.ones((7, 7), dtype=bool)
+
+    metrics = signal_metrics(reference, candidate, valid)
+
+    assert metrics["hf_retention"] < 1.0
+
+
+def test_hf_retention_drops_under_gaussian_blur() -> None:
+    reference = np.zeros((9, 9), dtype=float)
+    reference[4, 4] = 1.0
+    blurred = ndimage.gaussian_filter(reference, sigma=1.0)
+    valid = np.ones((9, 9), dtype=bool)
+
+    exact_metrics = signal_metrics(reference, reference, valid)
+    blurred_metrics = signal_metrics(reference, blurred, valid)
+
+    assert exact_metrics["hf_retention"] == 1.0
+    assert blurred_metrics["hf_retention"] < exact_metrics["hf_retention"]
+
+
+def test_signal_acceptance_threshold_is_exact_for_clean_scenarios() -> None:
+    config = ScenarioConfig(
+        scenario_id="clean",
+        description="clean",
+        grid_shape=(5, 5),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+    )
+
+    assert signal_acceptance_threshold(config) == 1e-12
+
+
+def test_signal_acceptance_threshold_scales_with_noise_and_outliers() -> None:
+    config = ScenarioConfig(
+        scenario_id="corrupt",
+        description="corrupt",
+        grid_shape=(5, 5),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+        gaussian_noise_std=0.02,
+        outlier_fraction=0.05,
+        retrace_error=0.01,
+    )
+
+    assert math.isclose(signal_acceptance_threshold(config), 0.12)

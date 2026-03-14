@@ -1,0 +1,18 @@
+scenario_id: s09_loader_extensible
+description: Scenario exercising extensible YAML loading.
+grid_shape: [8, 8]
+tile_shape: [5, 5]
+pixel_size: 1.0
+scan_offsets:
+  - [0.0, 0.0]
+baseline_name: mean
+rotation_deg: [0.0]
+reference_bias: 0.0
+gaussian_noise_std: 0.0
+outlier_fraction: 0.0
+retrace_error: 0.0
+seed: 9
+subaperture_dc_step: 0.25
+future_nuisance_flag: true
+metadata:
+  declared_key: declared_value

@@ -7,6 +7,9 @@ import numpy as np
 from stitching.contracts import ReconstructionSurface, SubApertureObservation
 
 
+ZERO_OUTSIDE_MASK_ATOL = 1e-12
+
+
 def validate_surface_alignment(z: np.ndarray, valid_mask: np.ndarray) -> None:
     """Enforce shared shape and zero-outside-mask invariants."""
 
@@ -14,7 +17,7 @@ def validate_surface_alignment(z: np.ndarray, valid_mask: np.ndarray) -> None:
         raise ValueError("Values and valid_mask must have identical shapes.")
     if valid_mask.dtype != np.bool_:
         raise ValueError("valid_mask must be boolean.")
-    if not np.all(z[~valid_mask] == 0.0):
+    if not np.allclose(z[~valid_mask], 0.0, atol=ZERO_OUTSIDE_MASK_ATOL, rtol=0.0):
         raise ValueError("Values outside valid_mask must be zero.")
 
 

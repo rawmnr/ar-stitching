@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,13 @@ class SubApertureObservation:
 
     @property
     def translation_xy(self) -> tuple[float, float]:
-        """Return the tile-center offset relative to the geometric center of the global frame."""
+        """Return a derived convenience translation, not independent state.
+
+        `ScenarioConfig.scan_offsets` defines requested scan motion at scenario level.
+        `SubApertureObservation` stores the realized pose as `center_xy` in the global
+        frame, and `translation_xy` is derived from that pose for consumers that still
+        want center-relative offsets.
+        """
 
         global_center_x = (self.global_shape[1] - 1) / 2.0
         global_center_y = (self.global_shape[0] - 1) / 2.0
@@ -79,27 +85,52 @@ class ScenarioConfig:
     seed: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @staticmethod
+    def _normalize_field(name: str, value: Any) -> Any:
+        """Normalize YAML values into the dataclass field contract."""
+
+        tuple_2d_fields = {"grid_shape", "tile_shape"}
+        tuple_seq_fields = {"rotation_deg"}
+        nested_tuple_fields = {"scan_offsets"}
+        float_fields = {"pixel_size", "reference_bias", "gaussian_noise_std", "outlier_fraction", "retrace_error"}
+        int_fields = {"seed"}
+        str_fields = {"scenario_id", "description", "baseline_name"}
+
+        if name in tuple_2d_fields:
+            return None if value is None else tuple(value)
+        if name in tuple_seq_fields:
+            return tuple(value)
+        if name in nested_tuple_fields:
+            return tuple(tuple(item) for item in value)
+        if name in float_fields:
+            return float(value)
+        if name in int_fields:
+            return int(value)
+        if name in str_fields:
+            return str(value)
+        if name == "metadata":
+            return dict(value)
+        return value
+
     @classmethod
     def from_yaml(cls, path: str | Path) -> "ScenarioConfig":
         """Load a scenario config from a YAML file."""
 
-        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        return cls(
-            scenario_id=payload["scenario_id"],
-            description=payload["description"],
-            grid_shape=tuple(payload["grid_shape"]),
-            pixel_size=float(payload["pixel_size"]),
-            scan_offsets=tuple(tuple(offset) for offset in payload["scan_offsets"]),
-            tile_shape=None if payload.get("tile_shape") is None else tuple(payload["tile_shape"]),
-            baseline_name=str(payload.get("baseline_name", "mean")),
-            rotation_deg=tuple(payload.get("rotation_deg", [0.0])),
-            reference_bias=float(payload.get("reference_bias", 0.0)),
-            gaussian_noise_std=float(payload.get("gaussian_noise_std", 0.0)),
-            outlier_fraction=float(payload.get("outlier_fraction", 0.0)),
-            retrace_error=float(payload.get("retrace_error", 0.0)),
-            seed=int(payload.get("seed", 0)),
-            metadata=dict(payload.get("metadata", {})),
-        )
+        payload = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+        field_names = {field_info.name for field_info in fields(cls)}
+        config_kwargs: dict[str, Any] = {}
+
+        for field_info in fields(cls):
+            field_name = field_info.name
+            if field_name == "metadata":
+                continue
+            if field_name in payload:
+                config_kwargs[field_name] = cls._normalize_field(field_name, payload[field_name])
+
+        extra_metadata = {key: value for key, value in payload.items() if key not in field_names}
+        declared_metadata = dict(payload.get("metadata", {}))
+        config_kwargs["metadata"] = {**declared_metadata, **extra_metadata}
+        return cls(**config_kwargs)
 
     @property
     def effective_tile_shape(self) -> tuple[int, int]:

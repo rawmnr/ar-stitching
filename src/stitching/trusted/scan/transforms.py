@@ -7,6 +7,9 @@ import math
 import numpy as np
 
 
+CENTER_ALIGNMENT_TOL = 1e-9
+
+
 def rotation_matrix_deg(angle_deg: float) -> np.ndarray:
     """Return a 2x2 rotation matrix for bookkeeping and tests."""
 
@@ -58,8 +61,8 @@ def placement_slices(
     center_y = float(center_xy[1])
     tile_rows, tile_cols = tile_shape
 
-    top = int(round(center_y - (tile_rows - 1) / 2.0))
-    left = int(round(center_x - (tile_cols - 1) / 2.0))
+    top = _aligned_integer_origin(center_y, tile_rows, axis_name="y")
+    left = _aligned_integer_origin(center_x, tile_cols, axis_name="x")
     bottom = top + tile_rows
     right = left + tile_cols
 
@@ -79,3 +82,15 @@ def placement_slices(
         slice(local_y_start, local_y_end),
         slice(local_x_start, local_x_end),
     )
+
+
+def _aligned_integer_origin(center: float, tile_extent: int, axis_name: str) -> int:
+    """Convert a parity-compatible geometric center to an integer array origin."""
+
+    origin = center - (tile_extent - 1) / 2.0
+    rounded_origin = round(origin)
+    if not math.isclose(origin, rounded_origin, abs_tol=CENTER_ALIGNMENT_TOL):
+        raise ValueError(
+            f"Tile center along {axis_name}={center} is incompatible with integer placement for extent {tile_extent}."
+        )
+    return int(rounded_origin)

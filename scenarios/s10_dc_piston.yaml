@@ -1,0 +1,16 @@
+scenario_id: s10_dc_piston
+description: Multi-observation scenario with explicit per-tile DC piston nuisance.
+grid_shape: [9, 9]
+tile_shape: [5, 5]
+pixel_size: 1.0
+scan_offsets:
+  - [-2.0, 0.0]
+  - [2.0, 0.0]
+baseline_name: mean
+rotation_deg: [0.0, 0.0]
+reference_bias: 0.0
+gaussian_noise_std: 0.0
+outlier_fraction: 0.0
+retrace_error: 0.0
+seed: 10
+subaperture_dc_values: [0.0, 0.3]

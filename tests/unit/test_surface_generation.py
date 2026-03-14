@@ -24,10 +24,37 @@ def test_surface_from_basis_rejects_unknown_basis() -> None:
 def test_identity_surface_uses_legendre_generation() -> None:
     truth = generate_identity_surface((5, 5), pixel_size=1.0)
 
-    assert truth.metadata["surface_model"] == "legendre_tilt_plus_weak_quadratic"
+    assert truth.metadata["surface_model"] == "legendre_structured_low_order"
     assert np.std(truth.z) > 0.0
 
 
-def test_zernike_adapter_fails_explicitly_without_backend() -> None:
-    with pytest.raises((ImportError, NotImplementedError)):
-        generate_zernike_surface(coefficients=np.array([0.1, 0.2]), shape=(9, 9), backend="auto")
+def test_identity_surface_has_nontrivial_edge_variation() -> None:
+    truth = generate_identity_surface((9, 9), pixel_size=1.0)
+
+    top_edge = truth.z[0, :]
+    bottom_edge = truth.z[-1, :]
+    assert np.std(top_edge) > 0.0
+    assert np.std(bottom_edge) > 0.0
+    assert not np.allclose(top_edge, bottom_edge)
+
+
+def test_zernike_internal_backend_generates_circular_surface() -> None:
+    surface = generate_zernike_surface(coefficients=np.array([0.1, 0.2]), shape=(9, 9), backend="internal")
+
+    assert surface.shape == (9, 9)
+    assert np.std(surface) > 0.0
+    assert surface[0, 0] == 0.0
+
+
+def test_surface_from_basis_supports_zernike() -> None:
+    truth = surface_from_basis(
+        shape=(9, 9),
+        pixel_size=1.0,
+        basis_name="zernike",
+        coefficients=np.array([0.1, 0.2]),
+    )
+
+    assert truth.z.shape == (9, 9)
+    assert truth.valid_mask.shape == (9, 9)
+    assert truth.valid_mask[0, 0] is np.False_
+    assert truth.metadata["surface_model"] == "zernike"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Iterable
 
 import numpy as np
@@ -21,17 +22,15 @@ def _validate_observation_list(observations: Iterable[SubApertureObservation]) -
 
 def _place_observations(
     observation_list: list[SubApertureObservation],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], list[tuple[float, float]]]:
-    """Place local tiles on the global grid and collect stacked samples."""
+) -> tuple[np.ndarray, list[str], list[tuple[float, float]]]:
+    """Validate shared placement metadata and collect support bookkeeping."""
 
     global_shape = observation_list[0].global_shape
-    max_observations = len(observation_list)
-    stacked = np.full((max_observations, *global_shape), np.nan, dtype=float)
     observed_support_mask = np.zeros(global_shape, dtype=bool)
     source_observation_ids: list[str] = []
     centers_xy: list[tuple[float, float]] = []
 
-    for index, observation in enumerate(observation_list):
+    for observation in observation_list:
         if observation.global_shape != global_shape:
             raise ValueError("All observations must share the same global_shape.")
         global_y, global_x, local_y, local_x = placement_slices(
@@ -39,16 +38,13 @@ def _place_observations(
             observation.tile_shape,
             observation.center_xy,
         )
-        local_z = np.array(observation.z, copy=True)[local_y, local_x]
         local_mask = np.array(observation.valid_mask, copy=True)[local_y, local_x]
-        stack_view = stacked[index, global_y, global_x]
         support_view = observed_support_mask[global_y, global_x]
-        stack_view[local_mask] = local_z[local_mask]
         support_view[local_mask] = True
         source_observation_ids.append(observation.observation_id)
         centers_xy.append(observation.center_xy)
 
-    return stacked, observed_support_mask, np.any(np.isfinite(stacked), axis=0), source_observation_ids, centers_xy
+    return observed_support_mask, source_observation_ids, centers_xy
 
 
 def _reconstruction_metadata(
@@ -68,17 +64,41 @@ def _reconstruction_metadata(
     }
 
 
+def _iter_placed_pixels(
+    observation_list: list[SubApertureObservation],
+):
+    """Yield per-observation placement views for valid local pixels."""
+
+    for observation in observation_list:
+        global_y, global_x, local_y, local_x = placement_slices(
+            observation.global_shape,
+            observation.tile_shape,
+            observation.center_xy,
+        )
+        local_z = np.array(observation.z, copy=False)[local_y, local_x]
+        local_mask = np.array(observation.valid_mask, copy=False)[local_y, local_x]
+        yield global_y, global_x, local_z, local_mask
+
+
 def baseline_integer_unshift_mean(
     observations: Iterable[SubApertureObservation],
 ) -> ReconstructionSurface:
     """Reconstruct a global surface by placing local tiles into the global frame."""
 
     observation_list = _validate_observation_list(observations)
-    stacked, observed_support_mask, valid_mask, source_observation_ids, centers_xy = _place_observations(observation_list)
-    finite_mask = np.isfinite(stacked)
-    sum_z = np.nansum(stacked, axis=0)
-    count = np.sum(finite_mask, axis=0)
-    z = np.zeros(global_shape := observation_list[0].global_shape, dtype=float)
+    global_shape = observation_list[0].global_shape
+    observed_support_mask, source_observation_ids, centers_xy = _place_observations(observation_list)
+    sum_z = np.zeros(global_shape, dtype=float)
+    count = np.zeros(global_shape, dtype=int)
+
+    for global_y, global_x, local_z, local_mask in _iter_placed_pixels(observation_list):
+        sum_view = sum_z[global_y, global_x]
+        count_view = count[global_y, global_x]
+        sum_view[local_mask] += local_z[local_mask]
+        count_view[local_mask] += 1
+
+    valid_mask = count > 0
+    z = np.zeros(global_shape, dtype=float)
     z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
 
     return ReconstructionSurface(
@@ -96,9 +116,23 @@ def baseline_integer_unshift_median(
     """Reconstruct a global surface by placing local tiles and taking the median on overlaps."""
 
     observation_list = _validate_observation_list(observations)
-    stacked, observed_support_mask, valid_mask, source_observation_ids, centers_xy = _place_observations(observation_list)
-    z = np.zeros(global_shape := observation_list[0].global_shape, dtype=float)
-    z[valid_mask] = np.nanmedian(stacked[:, valid_mask], axis=0)
+    global_shape = observation_list[0].global_shape
+    observed_support_mask, source_observation_ids, centers_xy = _place_observations(observation_list)
+    samples_by_pixel: defaultdict[int, list[float]] = defaultdict(list)
+
+    for global_y, global_x, local_z, local_mask in _iter_placed_pixels(observation_list):
+        global_rows, global_cols = np.nonzero(local_mask)
+        for local_row, local_col in zip(global_rows.tolist(), global_cols.tolist(), strict=False):
+            global_row = global_y.start + local_row
+            global_col = global_x.start + local_col
+            flat_index = np.ravel_multi_index((global_row, global_col), global_shape)
+            samples_by_pixel[flat_index].append(float(local_z[local_row, local_col]))
+
+    valid_mask = observed_support_mask
+    z = np.zeros(global_shape, dtype=float)
+    for flat_index, samples in samples_by_pixel.items():
+        row, col = np.unravel_index(flat_index, global_shape)
+        z[row, col] = float(np.median(np.asarray(samples, dtype=float)))
 
     return ReconstructionSurface(
         z=z,

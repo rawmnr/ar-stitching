@@ -32,5 +32,5 @@ def test_generate_legendre_surface_from_single_tilt_term() -> None:
 def test_identity_surface_is_nonflat_legendre_surface() -> None:
     truth = generate_identity_surface((7, 7), pixel_size=1.0)
 
-    assert truth.metadata["surface_model"] == "legendre_tilt_plus_weak_quadratic"
+    assert truth.metadata["surface_model"] == "legendre_structured_low_order"
     assert np.std(truth.z) > 0.0
