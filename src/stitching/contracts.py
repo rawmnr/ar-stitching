@@ -40,6 +40,16 @@ class SubApertureObservation:
 
 
 @dataclass(frozen=True)
+class ReconstructionSurface:
+    """Reconstructed surface candidate produced by editable algorithms."""
+
+    z: ArrayF64
+    valid_mask: ArrayBool
+    source_observation_ids: tuple[str, ...]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ScenarioConfig:
     """Canonical experiment configuration loaded from versioned scenario files."""
 

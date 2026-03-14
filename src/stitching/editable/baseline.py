@@ -6,22 +6,18 @@ from typing import Iterable
 
 import numpy as np
 
-from stitching.contracts import SubApertureObservation
+from stitching.contracts import ReconstructionSurface, SubApertureObservation
 
 
 def baseline_identity(
     observations: Iterable[SubApertureObservation],
-) -> SubApertureObservation:
+) -> ReconstructionSurface:
     """Return the first observation unchanged as a placeholder baseline."""
 
     first = next(iter(observations))
-    return SubApertureObservation(
-        observation_id=first.observation_id,
+    return ReconstructionSurface(
         z=np.array(first.z, copy=True),
         valid_mask=np.array(first.valid_mask, copy=True),
-        translation_xy=first.translation_xy,
-        rotation_deg=first.rotation_deg,
-        reference_bias=first.reference_bias,
-        nuisance_terms=dict(first.nuisance_terms),
-        metadata=dict(first.metadata),
+        source_observation_ids=(first.observation_id,),
+        metadata={"baseline": "identity", **dict(first.metadata)},
     )

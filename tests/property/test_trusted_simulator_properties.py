@@ -42,6 +42,24 @@ def test_shifted_observation_keeps_value_and_mask_alignment_for_multiple_offsets
         validate_observation_alignment(observation)
 
 
+def test_boundary_clipping_preserves_alignment_when_pupil_moves_outside_frame() -> None:
+    config = ScenarioConfig(
+        scenario_id="clipped",
+        description="clipped",
+        grid_shape=(11, 11),
+        pixel_size=1.0,
+        scan_offsets=((6.0, 0.0),),
+        seed=0,
+    )
+    truth, observations = simulate_identity_observations(config)
+    observation = observations[0]
+
+    assert observation.valid_mask.sum() < truth.valid_mask.sum()
+    assert observation.valid_mask.sum() > 0
+    assert (observation.z[~observation.valid_mask] == 0.0).all()
+    validate_observation_alignment(observation)
+
+
 def test_validation_helper_rejects_nonzero_values_outside_mask() -> None:
     config = ScenarioConfig(
         scenario_id="bad",

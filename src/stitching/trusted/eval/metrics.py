@@ -6,8 +6,8 @@ from collections import deque
 
 import numpy as np
 
-from stitching.contracts import EvalReport, ScenarioConfig, SubApertureObservation, SurfaceTruth
-from stitching.trusted.validation import validate_observation_alignment
+from stitching.contracts import EvalReport, ReconstructionSurface, ScenarioConfig, SurfaceTruth
+from stitching.trusted.validation import validate_reconstruction_alignment
 
 
 GEOMETRY_ACCEPTANCE_THRESHOLDS: dict[str, float] = {
@@ -114,12 +114,12 @@ def signal_metrics(reference: np.ndarray, candidate: np.ndarray, valid_intersect
 def build_eval_report(
     config: ScenarioConfig,
     truth: SurfaceTruth,
-    candidate: SubApertureObservation,
+    candidate: ReconstructionSurface,
     runtime_sec: float,
 ) -> EvalReport:
     """Combine geometry and signal metrics into an evaluation report."""
 
-    validate_observation_alignment(candidate)
+    validate_reconstruction_alignment(candidate)
     geom = geometry_metrics(truth.valid_mask, candidate.valid_mask)
     sig = signal_metrics(truth.z, candidate.z, truth.valid_mask & candidate.valid_mask)
     accepted = (
