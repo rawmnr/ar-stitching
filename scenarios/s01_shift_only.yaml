@@ -1,0 +1,12 @@
+scenario_id: s01_shift_only
+description: Single shifted sub-aperture without signal corruption.
+grid_shape: [8, 8]
+pixel_size: 1.0
+scan_offsets:
+  - [1.0, 0.0]
+rotation_deg: [0.0]
+reference_bias: 0.0
+gaussian_noise_std: 0.0
+outlier_fraction: 0.0
+retrace_error: 0.0
+seed: 1

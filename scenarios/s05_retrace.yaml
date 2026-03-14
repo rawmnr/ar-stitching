@@ -1,0 +1,12 @@
+scenario_id: s05_retrace
+description: Simple retrace hook enabled.
+grid_shape: [8, 8]
+pixel_size: 1.0
+scan_offsets:
+  - [0.0, 0.0]
+rotation_deg: [0.0]
+reference_bias: 0.0
+gaussian_noise_std: 0.0
+outlier_fraction: 0.0
+retrace_error: 0.01
+seed: 5
