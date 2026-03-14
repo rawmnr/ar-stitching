@@ -19,7 +19,7 @@ def _integer_offset(offset_xy: tuple[float, float]) -> tuple[int, int]:
 
 
 def _tile_center(global_shape: tuple[int, int], offset_xy: tuple[float, float]) -> tuple[float, float]:
-    """Return the detector-tile center in the global frame."""
+    """Return the detector-tile geometric center in global pixel-center coordinates."""
 
     center_x = (global_shape[1] - 1) / 2.0 + offset_xy[0]
     center_y = (global_shape[0] - 1) / 2.0 + offset_xy[1]
@@ -74,7 +74,6 @@ def simulate_identity_observations(
                 tile_shape=tile_shape,
                 center_xy=center_xy,
                 global_shape=config.grid_shape,
-                translation_xy=(float(offset[0]), float(offset[1])),
                 rotation_deg=float(config.rotation_deg[min(index, len(config.rotation_deg) - 1)]),
                 reference_bias=config.reference_bias,
                 nuisance_terms={"subaperture_dc": float(index)},

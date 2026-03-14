@@ -32,3 +32,10 @@ def validate_reconstruction_alignment(reconstruction: ReconstructionSurface) -> 
     """Enforce shape and mask/value alignment for reconstruction candidates."""
 
     validate_surface_alignment(reconstruction.z, reconstruction.valid_mask)
+    if reconstruction.observed_support_mask is not None:
+        validate_surface_alignment(
+            np.zeros_like(reconstruction.observed_support_mask, dtype=float),
+            reconstruction.observed_support_mask,
+        )
+        if reconstruction.observed_support_mask.shape != reconstruction.valid_mask.shape:
+            raise ValueError("Reconstruction observed_support_mask must match reconstruction shape.")

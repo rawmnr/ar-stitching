@@ -120,9 +120,14 @@ def build_eval_report(
     """Combine geometry and signal metrics into an evaluation report."""
 
     validate_reconstruction_alignment(candidate)
+    if candidate.observed_support_mask is None:
+        raise ValueError("ReconstructionSurface must provide observed_support_mask for trusted evaluation.")
+    support_violation = bool(np.any(candidate.valid_mask & ~candidate.observed_support_mask))
     geom = geometry_metrics(truth.valid_mask, candidate.valid_mask)
     sig = signal_metrics(truth.z, candidate.z, truth.valid_mask & candidate.valid_mask)
     accepted = (
+        not support_violation
+        and
         geom["footprint_iou"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["footprint_iou_min"]
         and geom["valid_pixel_recall"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["valid_pixel_recall_min"]
         and geom["valid_pixel_precision"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["valid_pixel_precision_min"]
@@ -130,11 +135,14 @@ def build_eval_report(
         and geom["hole_ratio"] <= GEOMETRY_ACCEPTANCE_THRESHOLDS["hole_ratio_max"]
         and sig["mae_on_valid_intersection"] <= 1e-12
     )
+    notes: list[str] = []
+    if support_violation:
+        notes.append("reconstruction_valid_mask_exceeds_observed_support")
     return EvalReport(
         scenario_id=config.scenario_id,
         geometry_metrics=geom,
         signal_metrics=sig,
         runtime_sec=runtime_sec,
         accepted=accepted,
-        notes=(),
+        notes=tuple(notes),
     )

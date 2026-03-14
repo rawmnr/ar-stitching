@@ -8,7 +8,8 @@ This document defines the current trusted simulator behavior for the repository 
 
 - Arrays use `z[y, x]` indexing.
 - `x` increases to the right and `y` increases downward.
-- `translation_xy` is expressed in detector-frame pixel units as `(dx, dy)`.
+- `center_xy` is the geometric center of a tile in global pixel-center coordinates.
+- `translation_xy` is derived from `center_xy` relative to the geometric center of the global grid.
 - The current scaffold rounds offsets to integer pixels before simulation.
 - Positive `dx` shifts content right. Positive `dy` shifts content down.
 - Rotation is stored as metadata only. No rotation resampling is applied yet.
@@ -23,9 +24,10 @@ This document defines the current trusted simulator behavior for the repository 
 ## `valid_mask` Semantics
 
 - `True` means the detector reports a valid sample at that pixel.
-- `False` means the pixel is outside the shifted pupil footprint or clipped by image borders.
+- `False` means the pixel is outside the local tile support or clipped by image borders.
 - Invalid pixels must not contribute to geometry or signal metrics.
 - The trusted simulator zeroes `z` outside `valid_mask` to keep mask/value alignment explicit.
+- Reconstruction support is additionally constrained by the union of observed support when provided.
 
 ## Order of Simulation Operations
 

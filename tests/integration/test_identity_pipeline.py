@@ -2,8 +2,10 @@ from pathlib import Path
 
 import numpy as np
 
-from stitching.editable.baseline import baseline_integer_unshift_mean
-from stitching.contracts import ScenarioConfig
+import pytest
+
+from stitching.editable.baseline import baseline_integer_unshift_mean, baseline_integer_unshift_median
+from stitching.contracts import ReconstructionSurface, ScenarioConfig
 from stitching.harness.run_eval import run_baseline_eval, run_identity_eval
 from stitching.trusted.eval.metrics import build_eval_report
 from stitching.trusted.simulator.identity import simulate_identity_observations
@@ -43,12 +45,12 @@ def test_baseline_returns_reconstruction_without_mutating_input_observation() ->
     assert (observations[0].valid_mask == original_mask).all()
 
 
-def test_shift_only_baseline_is_accepted_with_local_tile_placement() -> None:
+def test_shift_only_baseline_is_rejected_when_full_size_tile_clips_at_borders() -> None:
     shifted_report = run_baseline_eval(Path("scenarios/s01_shift_only.yaml"))
 
-    assert shifted_report.accepted is True
+    assert shifted_report.accepted is False
     assert shifted_report.signal_metrics["mae_on_valid_intersection"] == 0.0
-    assert shifted_report.geometry_metrics["footprint_iou"] == 1.0
+    assert shifted_report.geometry_metrics["footprint_iou"] < 1.0
 
 
 def test_reference_bias_scenario_is_rejected_or_degraded() -> None:
@@ -110,3 +112,28 @@ def test_local_tile_observation_requires_global_placement() -> None:
 
     assert observations[0].z.shape == config.effective_tile_shape
     assert reconstruction.z.shape == config.grid_shape
+
+
+def test_outlier_scenario_median_baseline_beats_mean_baseline() -> None:
+    config = ScenarioConfig.from_yaml(Path("scenarios/s04_outliers.yaml"))
+    truth, observations = simulate_identity_observations(config)
+    mean_reconstruction = baseline_integer_unshift_mean(observations)
+    median_reconstruction = baseline_integer_unshift_median(observations)
+    mean_report = build_eval_report(config, truth, mean_reconstruction, runtime_sec=0.0)
+    median_report = build_eval_report(config, truth, median_reconstruction, runtime_sec=0.0)
+
+    assert median_report.signal_metrics["mae_on_valid_intersection"] <= mean_report.signal_metrics["mae_on_valid_intersection"]
+    assert median_report.signal_metrics["rms_on_valid_intersection"] <= mean_report.signal_metrics["rms_on_valid_intersection"]
+
+
+def test_trusted_evaluation_requires_observed_support_mask() -> None:
+    config = ScenarioConfig.from_yaml(Path("scenarios/s00_identity.yaml"))
+    truth, _ = simulate_identity_observations(config)
+    candidate = ReconstructionSurface(
+        z=np.array(truth.z, copy=True),
+        valid_mask=np.array(truth.valid_mask, copy=True),
+        source_observation_ids=("obs",),
+    )
+
+    with pytest.raises(ValueError):
+        build_eval_report(config, truth, candidate, runtime_sec=0.0)

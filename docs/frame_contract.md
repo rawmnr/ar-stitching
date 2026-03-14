@@ -12,8 +12,9 @@ This document fixes the intended coordinate-frame contract for observations and 
 
 ## Translation Semantics
 
-- `translation_xy` is detector motion in pixel units as `(dx, dy)`.
-- `center_xy` is the detector-tile center expressed in global pixel coordinates.
+- `center_xy` is the geometric center of the detector tile expressed in global pixel-center coordinates.
+- Odd tile sizes therefore use integer centers, while even tile sizes use half-integer centers.
+- `translation_xy` is a derived quantity: `center_xy - global_geometric_center`.
 - The trusted simulator currently rounds offsets to integers.
 - A positive shift means the detector center moves right/down in the global frame.
 - The current baseline reconstructs by placing each local tile into the global truth frame and averaging overlaps.
@@ -22,6 +23,8 @@ This document fixes the intended coordinate-frame contract for observations and 
 
 - Observation `valid_mask` marks where the detector measured a valid sample after footprinting and clipping.
 - Reconstruction `valid_mask` marks where the reconstruction artifact claims valid support in the global frame.
+- `ReconstructionSurface.observed_support_mask`, when present, is the union of physically observed support used to constrain the reconstruction.
+- A reconstruction is not allowed to claim `valid_mask=True` outside `observed_support_mask`.
 - Values outside any `valid_mask` must be zero by trusted contract.
 
 ## Current Foundation Limitation

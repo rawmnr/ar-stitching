@@ -35,11 +35,18 @@ class SubApertureObservation:
     tile_shape: tuple[int, int]
     center_xy: tuple[float, float]
     global_shape: tuple[int, int]
-    translation_xy: tuple[float, float]
     rotation_deg: float
     reference_bias: float = 0.0
     nuisance_terms: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def translation_xy(self) -> tuple[float, float]:
+        """Return the tile-center offset relative to the geometric center of the global frame."""
+
+        global_center_x = (self.global_shape[1] - 1) / 2.0
+        global_center_y = (self.global_shape[0] - 1) / 2.0
+        return self.center_xy[0] - global_center_x, self.center_xy[1] - global_center_y
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,7 @@ class ReconstructionSurface:
     z: ArrayF64
     valid_mask: ArrayBool
     source_observation_ids: tuple[str, ...]
+    observed_support_mask: ArrayBool | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

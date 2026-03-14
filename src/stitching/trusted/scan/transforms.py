@@ -48,14 +48,18 @@ def placement_slices(
     tile_shape: tuple[int, int],
     center_xy: tuple[float, float],
 ) -> tuple[slice, slice, slice, slice]:
-    """Return aligned global and local slices for integer placement with clipping."""
+    """Return aligned global and local slices for integer placement with clipping.
 
-    center_x = int(round(center_xy[0]))
-    center_y = int(round(center_xy[1]))
+    `center_xy` is interpreted as the geometric center of the tile in pixel-center coordinates.
+    For even tile sizes this naturally yields half-integer centers.
+    """
+
+    center_x = float(center_xy[0])
+    center_y = float(center_xy[1])
     tile_rows, tile_cols = tile_shape
 
-    top = center_y - tile_rows // 2
-    left = center_x - tile_cols // 2
+    top = int(round(center_y - (tile_rows - 1) / 2.0))
+    left = int(round(center_x - (tile_cols - 1) / 2.0))
     bottom = top + tile_rows
     right = left + tile_cols
 
