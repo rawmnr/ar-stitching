@@ -72,7 +72,7 @@ def run_baseline_eval(scenario_path: str | Path, baseline_name: str | None = Non
     truth, observations = simulate_identity_observations(config)
     selected_baseline = config.baseline_name if baseline_name is None else baseline_name
     reconstruction = _with_verified_observed_support(_resolve_baseline(selected_baseline)(observations), observations)
-    return build_eval_report(config, truth, reconstruction, runtime_sec=0.0)
+    return build_eval_report(config, truth, reconstruction, observations, runtime_sec=0.0)
 
 
 def run_median_baseline_eval(scenario_path: str | Path) -> EvalReport:

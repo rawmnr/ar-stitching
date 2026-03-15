@@ -3,6 +3,7 @@ from importlib import import_module
 import numpy as np
 import pytest
 
+from stitching.contracts import ScenarioConfig
 from stitching.trusted.bases import zernike
 from stitching.trusted.bases.zernike import generate_zernike_surface
 from stitching.trusted.surface.generation import generate_identity_surface, surface_from_basis
@@ -25,14 +26,28 @@ def test_surface_from_basis_rejects_unknown_basis() -> None:
 
 
 def test_identity_surface_uses_legendre_generation() -> None:
-    truth = generate_identity_surface((5, 5), pixel_size=1.0)
+    config = ScenarioConfig(
+        scenario_id="test",
+        description="test",
+        grid_shape=(5, 5),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+    )
+    truth = generate_identity_surface(config)
 
     assert truth.metadata["surface_model"] == "legendre_structured_low_order"
     assert np.std(truth.z) > 0.0
 
 
 def test_identity_surface_has_nontrivial_edge_variation() -> None:
-    truth = generate_identity_surface((9, 9), pixel_size=1.0)
+    config = ScenarioConfig(
+        scenario_id="test",
+        description="test",
+        grid_shape=(9, 9),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+    )
+    truth = generate_identity_surface(config)
 
     top_edge = truth.z[0, :]
     bottom_edge = truth.z[-1, :]

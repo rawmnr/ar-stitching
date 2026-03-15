@@ -1,0 +1,20 @@
+scenario_id: s15_realistic_metrology
+description: Scénario réaliste (Pupille circulaire, bruit LF Z1-Z15, offsets sub-pixel).
+grid_shape: [64, 64]
+tile_shape: [32, 32]
+pixel_size: 1.0
+scan_offsets:
+  - [-10.5, -10.5]
+  - [10.5, -10.5]
+  - [-10.5, 10.5]
+  - [10.5, 10.5]
+baseline_name: mean
+seed: 15
+metadata:
+  truth_basis: zernike
+  truth_coefficients: [0.0, 0.0, 0.0, 0.5] # Focus (Z4) part of the signal
+  detector_pupil: circular
+  detector_radius_fraction: 0.45
+  low_frequency_noise_std: 0.05
+  realized_pose_error_std: 0.1
+  ignore_piston: true

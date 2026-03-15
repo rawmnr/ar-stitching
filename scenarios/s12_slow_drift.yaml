@@ -1,0 +1,14 @@
+scenario_id: s12_slow_drift
+description: Drift lent corrélé le long de la séquence de scan.
+grid_shape: [32, 32]
+tile_shape: [16, 16]
+pixel_size: 1.0
+scan_offsets:
+  - [-4.0, -4.0]
+  - [4.0, -4.0]
+  - [-4.0, 4.0]
+  - [4.0, 4.0]
+baseline_name: mean
+seed: 12
+metadata:
+  realized_pose_drift_std: 0.1

@@ -1,0 +1,14 @@
+scenario_id: s14_complex_retrace
+description: Retrace dépendant de la pente locale (gradient).
+grid_shape: [32, 32]
+tile_shape: [16, 16]
+pixel_size: 1.0
+scan_offsets:
+  - [-4.0, -4.0]
+  - [4.0, -4.0]
+  - [-4.0, 4.0]
+  - [4.0, 4.0]
+baseline_name: mean
+seed: 14
+metadata:
+  slope_retrace_error: 0.1

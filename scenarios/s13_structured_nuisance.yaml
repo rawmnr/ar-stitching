@@ -1,0 +1,16 @@
+scenario_id: s13_structured_nuisance
+description: Nuisances structurées (tip/tilt/focus) par sous-aperture.
+grid_shape: [32, 32]
+tile_shape: [16, 16]
+pixel_size: 1.0
+scan_offsets:
+  - [-4.0, -4.0]
+  - [4.0, -4.0]
+  - [-4.0, 4.0]
+  - [4.0, 4.0]
+baseline_name: mean
+seed: 13
+metadata:
+  subaperture_tip: 0.1
+  subaperture_tilt: -0.05
+  subaperture_focus: 0.02

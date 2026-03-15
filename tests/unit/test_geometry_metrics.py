@@ -4,7 +4,7 @@ import numpy as np
 from scipy import ndimage
 
 from stitching.contracts import ScenarioConfig
-from stitching.contracts import ReconstructionSurface, SurfaceTruth
+from stitching.contracts import ReconstructionSurface, SubApertureObservation, SurfaceTruth
 from stitching.trusted.eval.metrics import build_eval_report, geometry_metrics, signal_acceptance_threshold, signal_metrics
 from stitching.trusted.noise.models import outlier_magnitude_scale
 from stitching.trusted.scan.transforms import apply_integer_shift, rotation_matrix_deg
@@ -227,6 +227,16 @@ def test_eval_report_accepts_error_within_outlier_budget() -> None:
         observed_support_mask=np.ones((3, 3), dtype=bool),
     )
 
-    report = build_eval_report(config, truth, candidate, runtime_sec=0.0)
+    observation = SubApertureObservation(
+        observation_id="obs",
+        z=np.array(truth.z, copy=True),
+        valid_mask=np.array(truth.valid_mask, copy=True),
+        tile_shape=(3, 3),
+        center_xy=(1.0, 1.0),
+        global_shape=(3, 3),
+        rotation_deg=0.0,
+    )
+
+    report = build_eval_report(config, truth, candidate, observations=(observation,), runtime_sec=0.0)
 
     assert report.accepted is True

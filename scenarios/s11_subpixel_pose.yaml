@@ -1,0 +1,14 @@
+scenario_id: s11_subpixel_pose
+description: Pose bruitée sub-pixel (jitter indépendant).
+grid_shape: [32, 32]
+tile_shape: [16, 16]
+pixel_size: 1.0
+scan_offsets:
+  - [-4.0, -4.0]
+  - [4.0, -4.0]
+  - [-4.0, 4.0]
+  - [4.0, 4.0]
+baseline_name: mean
+seed: 11
+metadata:
+  realized_pose_error_std: 0.2

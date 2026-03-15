@@ -56,19 +56,46 @@ def surface_from_basis(
     )
 
 
-def generate_identity_surface(shape: tuple[int, int], pixel_size: float) -> SurfaceTruth:
-    """Create a deterministic non-flat truth surface for trusted reconstruction tests."""
+def generate_identity_surface(config: ScenarioConfig) -> SurfaceTruth:
+    """Create a deterministic non-flat truth surface for trusted reconstruction tests.
+
+    By default, uses a structured Legendre surface. Can be overridden in config metadata.
+    """
+
+    metadata = config.metadata
+    basis_name = str(metadata.get("truth_basis", "legendre"))
+    
+    if "truth_coefficients" in metadata:
+        coeffs = np.asarray(metadata["truth_coefficients"], dtype=float)
+    else:
+        coeffs = _default_identity_coefficients()
 
     truth = surface_from_basis(
-        shape=shape,
-        pixel_size=pixel_size,
-        basis_name="legendre",
-        coefficients=_default_identity_coefficients(),
+        shape=config.grid_shape,
+        pixel_size=config.pixel_size,
+        basis_name=basis_name,
+        coefficients=coeffs,
     )
+    
+    # Optional mask override (e.g. for circular truth pupils)
+    if metadata.get("truth_pupil") == "circular":
+        from stitching.trusted.surface.footprint import circular_pupil_mask
+        mask = circular_pupil_mask(config.grid_shape, radius_fraction=float(metadata.get("truth_radius", 0.45)))
+        truth = SurfaceTruth(
+            z=np.where(mask, truth.z, 0.0),
+            valid_mask=mask,
+            pixel_size=truth.pixel_size,
+            units=truth.units,
+            metadata=truth.metadata,
+        )
+
     return SurfaceTruth(
         z=truth.z,
         valid_mask=truth.valid_mask,
         pixel_size=truth.pixel_size,
         units=truth.units,
-        metadata={"surface_model": "legendre_structured_low_order"},
+        metadata={
+            **truth.metadata,
+            "surface_model": basis_name if "truth_basis" in metadata else "legendre_structured_low_order",
+        },
     )

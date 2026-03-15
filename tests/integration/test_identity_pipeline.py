@@ -68,7 +68,7 @@ def test_clean_scenario_rejects_single_pixel_mask_shrinkage() -> None:
         metadata=dict(reconstruction.metadata),
     )
 
-    report = build_eval_report(config, truth, shrunk, runtime_sec=0.0)
+    report = build_eval_report(config, truth, shrunk, observations=observations, runtime_sec=0.0)
 
     assert report.accepted is False
     assert report.geometry_metrics["valid_pixel_recall"] < 1.0
@@ -128,8 +128,8 @@ def test_local_tile_multi_observation_baseline_improves_coverage() -> None:
     truth, observations = simulate_identity_observations(config)
     single_reconstruction = baseline_integer_unshift_mean((observations[0],))
     multi_reconstruction = baseline_integer_unshift_mean(observations)
-    single_report = build_eval_report(config, truth, single_reconstruction, runtime_sec=0.0)
-    multi_report = build_eval_report(config, truth, multi_reconstruction, runtime_sec=0.0)
+    single_report = build_eval_report(config, truth, single_reconstruction, observations=(observations[0],), runtime_sec=0.0)
+    multi_report = build_eval_report(config, truth, multi_reconstruction, observations=observations, runtime_sec=0.0)
 
     assert multi_report.geometry_metrics["valid_pixel_recall"] > single_report.geometry_metrics["valid_pixel_recall"]
     assert multi_report.geometry_metrics["footprint_iou"] > single_report.geometry_metrics["footprint_iou"]
@@ -149,8 +149,8 @@ def test_outlier_scenario_median_baseline_beats_mean_baseline() -> None:
     truth, observations = simulate_identity_observations(config)
     mean_reconstruction = baseline_integer_unshift_mean(observations)
     median_reconstruction = baseline_integer_unshift_median(observations)
-    mean_report = build_eval_report(config, truth, mean_reconstruction, runtime_sec=0.0)
-    median_report = build_eval_report(config, truth, median_reconstruction, runtime_sec=0.0)
+    mean_report = build_eval_report(config, truth, mean_reconstruction, observations=observations, runtime_sec=0.0)
+    median_report = build_eval_report(config, truth, median_reconstruction, observations=observations, runtime_sec=0.0)
 
     assert median_report.signal_metrics["mae_on_valid_intersection"] <= mean_report.signal_metrics["mae_on_valid_intersection"]
     assert median_report.signal_metrics["rms_on_valid_intersection"] <= mean_report.signal_metrics["rms_on_valid_intersection"]
@@ -159,7 +159,7 @@ def test_outlier_scenario_median_baseline_beats_mean_baseline() -> None:
 
 def test_trusted_evaluation_requires_observed_support_mask() -> None:
     config = ScenarioConfig.from_yaml(Path("scenarios/s00_identity.yaml"))
-    truth, _ = simulate_identity_observations(config)
+    truth, observations = simulate_identity_observations(config)
     candidate = ReconstructionSurface(
         z=np.array(truth.z, copy=True),
         valid_mask=np.array(truth.valid_mask, copy=True),
@@ -167,7 +167,7 @@ def test_trusted_evaluation_requires_observed_support_mask() -> None:
     )
 
     with pytest.raises(ValueError):
-        build_eval_report(config, truth, candidate, runtime_sec=0.0)
+        build_eval_report(config, truth, candidate, observations=observations, runtime_sec=0.0)
 
 
 def test_harness_can_select_median_baseline() -> None:
@@ -211,10 +211,10 @@ def test_dc_piston_scenario_rejects_naive_baseline_that_ignores_nuisance_terms()
     assert report.signal_metrics["mae_on_valid_intersection"] > 0.0
 
 
-def test_subpixel_offsets_are_rejected_explicitly_not_rounded() -> None:
+def test_subpixel_offsets_are_supported() -> None:
     config = ScenarioConfig(
-        scenario_id="subpixel_rejected",
-        description="subpixel rejected",
+        scenario_id="subpixel_supported",
+        description="subpixel supported",
         grid_shape=(9, 9),
         tile_shape=(5, 5),
         pixel_size=1.0,
@@ -222,8 +222,8 @@ def test_subpixel_offsets_are_rejected_explicitly_not_rounded() -> None:
         seed=0,
     )
 
-    with pytest.raises(ValueError):
-        simulate_identity_observations(config)
+    _, observations = simulate_identity_observations(config)
+    assert len(observations) == 1
 
 
 def test_large_grid_hole_ratio_smoke_does_not_hang_and_detects_hole() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from scipy.ndimage import map_coordinates
 
 
 CENTER_ALIGNMENT_TOL = 1e-9
@@ -44,6 +45,56 @@ def apply_integer_shift(values: np.ndarray, shift_xy: tuple[int, int]) -> np.nda
 
     result[dst_y_start:dst_y_end, dst_x_start:dst_x_end] = values[src_y_start:src_y_end, src_x_start:src_x_end]
     return result
+
+
+def extract_tile(
+    global_surface: np.ndarray,
+    global_mask: np.ndarray,
+    tile_shape: tuple[int, int],
+    center_xy: tuple[float, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract a detector tile from a global surface with sub-pixel interpolation.
+
+    If `center_xy` aligns perfectly with integer pixel placement, exact slicing
+    is used to avoid interpolation artifacts. Otherwise, bilinear interpolation
+    is used for both the surface values and the mask (thresholded at 0.5).
+    """
+
+    try:
+        global_y, global_x, local_y, local_x = placement_slices(global_surface.shape, tile_shape, center_xy)
+        z = np.zeros(tile_shape, dtype=float)
+        valid_mask = np.zeros(tile_shape, dtype=bool)
+        z[local_y, local_x] = global_surface[global_y, global_x]
+        valid_mask[local_y, local_x] = global_mask[global_y, global_x]
+        return z, valid_mask
+    except ValueError:
+        return _extract_tile_interpolated(global_surface, global_mask, tile_shape, center_xy)
+
+
+def _extract_tile_interpolated(
+    global_surface: np.ndarray,
+    global_mask: np.ndarray,
+    tile_shape: tuple[int, int],
+    center_xy: tuple[float, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Perform bilinear interpolation for sub-pixel tile extraction."""
+
+    rows, cols = tile_shape
+    origin_x = center_xy[0] - (cols - 1) / 2.0
+    origin_y = center_xy[1] - (rows - 1) / 2.0
+
+    yy, xx = np.indices(tile_shape, dtype=float)
+    coords = np.array([yy.ravel() + origin_y, xx.ravel() + origin_x])
+
+    # Map surface values (order=1 for bilinear)
+    z = map_coordinates(global_surface, coords, order=1, mode="constant", cval=0.0)
+    z = z.reshape(tile_shape)
+
+    # Map mask (order=1 and thresholding at 0.5 effectively keeps mask tight)
+    mask_f = map_coordinates(global_mask.astype(float), coords, order=1, mode="constant", cval=0.0)
+    valid_mask = mask_f.reshape(tile_shape) >= 0.5
+
+    return z, valid_mask
 
 
 def placement_slices(

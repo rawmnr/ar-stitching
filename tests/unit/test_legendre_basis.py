@@ -1,5 +1,6 @@
 import numpy as np
 
+from stitching.contracts import ScenarioConfig
 from stitching.trusted.bases.legendre import evaluate_legendre_basis_1d, generate_legendre_surface, sample_legendre_basis_2d
 from stitching.trusted.surface.generation import generate_identity_surface
 
@@ -30,7 +31,14 @@ def test_generate_legendre_surface_from_single_tilt_term() -> None:
 
 
 def test_identity_surface_is_nonflat_legendre_surface() -> None:
-    truth = generate_identity_surface((7, 7), pixel_size=1.0)
+    config = ScenarioConfig(
+        scenario_id="test",
+        description="test",
+        grid_shape=(7, 7),
+        pixel_size=1.0,
+        scan_offsets=((0.0, 0.0),),
+    )
+    truth = generate_identity_surface(config)
 
     assert truth.metadata["surface_model"] == "legendre_structured_low_order"
     assert np.std(truth.z) > 0.0

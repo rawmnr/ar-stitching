@@ -146,6 +146,7 @@ class EvalReport:
     scenario_id: str
     geometry_metrics: dict[str, float]
     signal_metrics: dict[str, float]
+    mismatch_metrics: dict[str, float]
     runtime_sec: float
     accepted: bool
     notes: tuple[str, ...] = ()

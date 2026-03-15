@@ -96,7 +96,7 @@ def test_even_tile_identity_reconstructs_without_half_pixel_bias() -> None:
     )
     truth, observations = simulate_identity_observations(config)
     reconstruction = baseline_integer_unshift_mean(observations)
-    report = build_eval_report(config, truth, reconstruction, runtime_sec=0.0)
+    report = build_eval_report(config, truth, reconstruction, observations=observations, runtime_sec=0.0)
 
     assert report.accepted is False
     assert report.signal_metrics["mae_on_valid_intersection"] == 0.0
@@ -159,7 +159,7 @@ def test_evaluator_rejects_hallucinated_support() -> None:
         scan_offsets=((0.0, 0.0),),
         seed=0,
     )
-    truth, _ = simulate_identity_observations(config)
+    truth, observations = simulate_identity_observations(config)
     observed_support = np.zeros((5, 5), dtype=bool)
     observed_support[1:4, 1:4] = True
     candidate_mask = np.ones((5, 5), dtype=bool)
@@ -170,7 +170,7 @@ def test_evaluator_rejects_hallucinated_support() -> None:
         observed_support_mask=observed_support,
     )
 
-    report = build_eval_report(config, truth, candidate, runtime_sec=0.0)
+    report = build_eval_report(config, truth, candidate, observations=observations, runtime_sec=0.0)
 
     assert report.accepted is False
     assert "reconstruction_valid_mask_exceeds_observed_support" in report.notes
@@ -185,7 +185,7 @@ def test_evaluator_rejects_single_valid_pixel_outside_observed_support() -> None
         scan_offsets=((0.0, 0.0),),
         seed=0,
     )
-    truth, _ = simulate_identity_observations(config)
+    truth, observations = simulate_identity_observations(config)
     candidate_mask = np.array(truth.valid_mask, copy=True)
     observed_support = np.array(truth.valid_mask, copy=True)
     candidate_mask[0, 0] = True
@@ -197,7 +197,7 @@ def test_evaluator_rejects_single_valid_pixel_outside_observed_support() -> None
         observed_support_mask=observed_support,
     )
 
-    report = build_eval_report(config, truth, candidate, runtime_sec=0.0)
+    report = build_eval_report(config, truth, candidate, observations=observations, runtime_sec=0.0)
 
     assert report.accepted is False
     assert "reconstruction_valid_mask_exceeds_observed_support" in report.notes
@@ -227,7 +227,7 @@ def test_harness_rejects_declared_support_that_exceeds_physical_tile_union() -> 
         _with_verified_observed_support(reconstruction, observations)
 
 
-def test_fractional_scan_offset_is_rejected_by_trusted_simulator() -> None:
+def test_fractional_scan_offset_is_supported() -> None:
     config = ScenarioConfig(
         scenario_id="fractional_offset",
         description="fractional offset",
@@ -238,8 +238,8 @@ def test_fractional_scan_offset_is_rejected_by_trusted_simulator() -> None:
         seed=0,
     )
 
-    with pytest.raises(ValueError):
-        simulate_identity_observations(config)
+    _, observations = simulate_identity_observations(config)
+    assert len(observations) == 1
 
 
 def test_validation_tolerates_tiny_roundoff_outside_mask() -> None:

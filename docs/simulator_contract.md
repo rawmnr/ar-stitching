@@ -10,9 +10,10 @@ This document defines the current trusted simulator behavior for the repository 
 - `x` increases to the right and `y` increases downward.
 - `center_xy` is the geometric center of a tile in global pixel-center coordinates.
 - `translation_xy` is derived from `center_xy` relative to the geometric center of the global grid.
-- The current scaffold rounds offsets to integer pixels before simulation.
+- The trusted simulator supports float `scan_offsets` with sub-pixel interpolation.
+- Bilinear interpolation is used for non-integer tile extraction; exact slicing is used for integer alignment.
 - Positive `dx` shifts content right. Positive `dy` shifts content down.
-- Rotation is stored as metadata only. No rotation resampling is applied yet.
+- Rotation is stored as metadata and physically applied using `np.rot90` (limited to 90-degree increments in this phase).
 
 ## Data Objects
 
@@ -32,22 +33,23 @@ This document defines the current trusted simulator behavior for the repository 
 ## Order of Simulation Operations
 
 1. Create the global truth surface.
-2. Choose a local detector tile shape and tile center in the global frame.
-3. Extract the corresponding global window into a local tile with integer clipping.
-4. Apply reference bias, nuisance terms, Gaussian noise, outliers, and retrace hook on the local tile.
-5. Zero all pixels outside `valid_mask`.
+2. Resolve the commanded tile center in the global frame.
+3. Apply `realized_pose_error` (optional metadata `realized_pose_error_std`).
+4. Extract the local tile using `extract_tile` (bilinear interpolation for sub-pixel, exact for integer).
+5. Apply `reference_bias`, `nuisance_terms` (including tip/tilt/focus), Gaussian noise, outliers, and retrace hook.
+6. Zero all pixels outside `valid_mask`.
+7. Apply discrete rotation (90-degree increments).
 
 ## Determinism
 
-- Gaussian noise and outliers use explicit seeds derived from `ScenarioConfig.seed`.
-- Zero bias, zero noise, zero outliers, and zero retrace must preserve the identity result exactly.
-- No sub-pixel interpolation or stochastic resampling is used in this phase.
+- All stochastic processes (noise, outliers, pose error) use explicit seeds derived from `ScenarioConfig.seed`.
+- Zero bias, zero noise, zero outliers, and zero retrace must preserve the identity result exactly for integer offsets.
+- No stochastic resampling is used in this phase except for explicitly requested pose error.
 
 ## Current Limitations
 
-- The truth surface is a deterministic low-order test surface, not a realistic optical process model.
-- Detector tiles are integer-placed local windows, not physically sampled sub-apertures.
-- Translation is integer-only; no sub-pixel motion model exists yet.
-- Rotation is not physically applied.
-- Instrument effects are placeholder additive hooks, not calibrated physical models.
+- Rotation is still restricted to 90-degree increments in this phase.
+- Interpolation for sub-pixel offsets introduces minor smoothing (bilinear).
+- Geometry metrics are relaxed (e.g. 0.99 IoU) to accommodate interpolation artifacts at mask boundaries.
+- Thermal drift and spatial bias are modeled as additive nuisance terms.
 - Reconstruction is still a simple place-and-average baseline.
