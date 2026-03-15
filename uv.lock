@@ -17,6 +17,7 @@ source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
+    { name = "pandas" },
     { name = "pyyaml" },
     { name = "scipy" },
 ]
@@ -41,6 +42,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "optiland", marker = "extra == 'optics'" },
+    { name = "pandas", specifier = ">=3.0.1" },
     { name = "prysm", marker = "extra == 'zernike-alt'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },

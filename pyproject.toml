@@ -13,6 +13,7 @@ dependencies = [
     "scipy>=1.13",
     "PyYAML>=6.0",
     "matplotlib>=3.8",
+    "pandas>=3.0.1",
 ]
 
 [project.optional-dependencies]
