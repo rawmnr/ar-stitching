@@ -73,12 +73,12 @@ class Ledger:
         target_dir = self.accepted_dir if result.verdict == RunVerdict.ACCEPTED else self.rejected_dir
         link = target_dir / run_dir.name
         if not link.exists():
-            # Handle Windows symlinks (requires developer mode or admin, or use directory junctions/copies)
-            # For simplicity in this environment, we'll try symlink and fallback to a small text file if it fails
+            # Use relative symlink if possible, or just copy on Windows if symlinks are restricted
             try:
                 link.symlink_to(run_dir.resolve(), target_is_directory=True)
             except OSError:
-                (link.with_suffix(".link")).write_text(str(run_dir.resolve()), encoding="utf-8")
+                # Fallback: write a small text file pointing to the run_dir
+                (target_dir / f"{run_dir.name}.ptr").write_text(str(run_dir.resolve()))
 
         return run_dir
 
@@ -87,11 +87,10 @@ class Ledger:
         best: dict[str, float] | None = None
         best_rms = float("inf")
         for accepted_link in sorted(self.accepted_dir.iterdir()):
-            # Handle both real symlinks and our fallback .link files
             if accepted_link.is_dir():
                 metrics_path = accepted_link / "metrics.json"
-            elif accepted_link.suffix == ".link":
-                metrics_path = Path(accepted_link.read_text(encoding="utf-8")) / "metrics.json"
+            elif accepted_link.suffix == ".ptr":
+                metrics_path = Path(accepted_link.read_text().strip()) / "metrics.json"
             else:
                 continue
 
@@ -107,11 +106,10 @@ class Ledger:
     def iteration_count(self, experiment_id: str) -> int:
         """Count completed iterations for a given experiment."""
         count = 0
-        if not self.runs_dir.exists():
-            return 0
-        for run_dir in self.runs_dir.iterdir():
-            if experiment_id in run_dir.name:
-                count += 1
+        if self.runs_dir.exists():
+            for run_dir in self.runs_dir.iterdir():
+                if experiment_id in run_dir.name:
+                    count += 1
         return count
 
 

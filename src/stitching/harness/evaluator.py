@@ -50,7 +50,6 @@ def load_candidate_module(candidate_path: Path) -> CandidateAlgorithm:
     if not hasattr(module, "CandidateStitcher"):
         raise ImportError(f"Candidate module must define a CandidateStitcher class.")
 
-    # Instantiate the stitcher - it must implement CandidateAlgorithm (at least reconstruct method)
     return module.CandidateStitcher()
 
 

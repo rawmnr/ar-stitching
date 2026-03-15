@@ -1,0 +1,14 @@
+# experiments/queue/exp_0001.yaml
+experiment_id: exp_0001_piston_gls
+description: "Phase 1-2: Piston correction → GLS"
+scenarios:
+  - s00_identity
+  - s01_shift_only
+  - s02_reference_bias
+  - s06_multi_overlap
+  - s07_local_tiles
+  - s10_dc_piston
+budget:
+  agent_time_sec: 120
+  eval_time_sec: 300
+  total_time_sec: 480

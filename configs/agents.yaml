@@ -1,0 +1,24 @@
+# configs/agents.yaml
+backends:
+  codex:
+    model: o4-mini
+    approval_mode: full-auto
+    timeout_sec: 120
+
+  codex_heavy:
+    model: o3
+    approval_mode: full-auto
+    timeout_sec: 300
+
+  opencode_anthropic:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    timeout_sec: 120
+
+  opencode_local:
+    provider: openai-compatible
+    model: qwen2.5-coder-32b
+    timeout_sec: 180
+
+default_backend: codex
+fallback_backend: opencode_anthropic

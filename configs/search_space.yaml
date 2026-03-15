@@ -1,0 +1,52 @@
+# configs/search_space.yaml
+# Defines the algorithmic search dimensions for autoresearch
+
+phases:
+  - id: piston_correction
+    description: "Per-observation DC offset removal from overlap analysis"
+    priority: 1
+    scenarios: [s00_identity, s01_shift_only, s02_reference_bias, s06_multi_overlap]
+
+  - id: gls_solver
+    description: "Global least-squares with piston/tip/tilt estimation"
+    priority: 2
+    scenarios: [s01_shift_only, s06_multi_overlap, s07_local_tiles, s10_dc_piston]
+
+  - id: robust_estimation
+    description: "Huber loss + IRLS for outlier rejection"
+    priority: 3
+    scenarios: [s04_outliers, s08_outliers_median]
+
+  - id: noise_handling
+    description: "Weighted averaging and noise-aware reconstruction"
+    priority: 4
+    scenarios: [s03_noise, s13_structured_nuisance]
+
+  - id: auto_calibration
+    description: "CS/SC reference bias self-calibration"
+    priority: 5
+    scenarios: [s02_reference_bias, s12_slow_drift]
+
+  - id: advanced_corrections
+    description: "Retrace, sub-pixel, complex distortions"
+    priority: 6
+    scenarios: [s05_retrace, s11_subpixel_pose, s14_complex_retrace]
+
+  - id: full_integration
+    description: "Hybrid solver on realistic scenarios"
+    priority: 7
+    scenarios: [s15_realistic_metrology, s16_digital_twin]
+
+hyperparameters:
+  tikhonov_lambda:
+    range: [1.0e-10, 1.0e-2]
+    scale: log
+  huber_delta:
+    range: [0.01, 5.0]
+    scale: log
+  irls_max_iterations:
+    range: [3, 50]
+    scale: linear
+  overlap_weight_exponent:
+    range: [0.5, 3.0]
+    scale: linear

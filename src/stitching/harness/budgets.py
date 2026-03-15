@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import signal
 import time
-import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Generator
@@ -29,17 +28,19 @@ class IterationBudget:
 def time_guard(budget_sec: float, label: str = "operation") -> Generator[None, None, None]:
     """Context manager that raises BudgetExceededError after budget_sec."""
 
-    # Note: signal.SIGALRM is not available on Windows.
-    # On Windows, this falls back to a no-op guard, but the BudgetTracker
-    # will still catch budget overruns at check-points.
-    if sys.platform == "win32" or not hasattr(signal, "SIGALRM"):
-        yield
-        return
-
     def _handler(signum: int, frame: object) -> None:
         raise BudgetExceededError(f"{label} exceeded {budget_sec:.1f}s budget.")
 
-    # Using SIGALRM for Unix-like systems
+    # signal.SIGALRM and signal.setitimer are NOT available on Windows.
+    # We provide a dummy implementation for Windows or use a different mechanism if needed.
+    # For now, we'll just log or use a simple timer check if possible.
+    import sys
+    if sys.platform == "win32":
+        # On Windows, we can't easily interrupt a running Python function with SIGALRM.
+        # This is a limitation for the "trusted" execution on Windows.
+        yield
+        return
+
     old_handler = signal.signal(signal.SIGALRM, _handler)
     signal.setitimer(signal.ITIMER_REAL, budget_sec)
     try:

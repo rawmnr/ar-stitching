@@ -74,12 +74,11 @@ class GitOps:
 
     def list_worktrees(self) -> list[str]:
         result = _run_git(["worktree", "list", "--porcelain"], self.repo_root)
-        lines = result.stdout.splitlines()
-        worktrees = []
-        for line in lines:
-            if line.startswith("worktree "):
-                worktrees.append(line.split(" ", 1)[1])
-        return worktrees
+        return [
+            line.split(" ", 1)[1]
+            for line in result.stdout.splitlines()
+            if line.startswith("worktree ")
+        ]
 
     # ---- Commit / revert ----
 
