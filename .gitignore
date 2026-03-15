@@ -208,3 +208,11 @@ __marimo__/
 
 # Generated reports
 artifacts/*.png
+
+# Autoresearch artifacts
+experiments/runs/
+experiments/rejected/
+
+# Temporary and local files
+test.txt
+.codex_task.md
