@@ -17,7 +17,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run autoresearch optimization loop.")
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--experiment-id", default="exp_default")
-    parser.add_argument("--backend", default="codex", choices=["codex", "opencode"])
+    parser.add_argument("--backend", default="codex", choices=["codex", "opencode", "simulated", "openai-direct"])
     parser.add_argument("--model", default=None)
     parser.add_argument("--max-iterations", type=int, default=100)
     parser.add_argument("--budget-profile", default="default", choices=["fast", "default", "overnight"])

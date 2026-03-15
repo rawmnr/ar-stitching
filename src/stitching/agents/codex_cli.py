@@ -1,17 +1,22 @@
-"""Codex CLI agent backend using `codex exec` for non-interactive runs."""
+"""Codex CLI agent backend using `codex exec`."""
 
 from __future__ import annotations
 
-import json
+import logging
+import platform
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from stitching.harness.protocols import AgentBackend, ExperimentContext, PatchProposal
 
+logger = logging.getLogger(__name__)
 
-class CodexCliBackend(AgentBackend):
+# Detect platform for executable name
+_CODEX_CMD = "codex.cmd" if platform.system() == "Windows" else "codex"
+
+
+class CodexCliBackend:
     """Agent backend wrapping OpenAI Codex CLI (`codex exec`)."""
 
     def __init__(
@@ -19,7 +24,8 @@ class CodexCliBackend(AgentBackend):
         repo_root: Path,
         model: str = "o4-mini",
         approval_mode: str = "full-auto",
-        timeout_sec: float = 120.0,
+        timeout_sec: float = 300.0,
+        **kwargs: Any,
     ) -> None:
         self.repo_root = repo_root
         self.model = model
@@ -31,107 +37,181 @@ class CodexCliBackend(AgentBackend):
         return f"codex-cli/{self.model}"
 
     def propose_patch(self, context: ExperimentContext) -> PatchProposal:
-        """Call `codex exec` with a structured prompt and parse its output."""
-        prompt = self._build_prompt(context)
+        """Write a task file, call codex exec, detect file changes."""
+        candidate_path = self.repo_root / context.editable_paths[0]
 
-        result = subprocess.run(
-            [
-                "codex",
-                "exec",
-                f"--model={self.model}",
-                f"--approval-mode={self.approval_mode}",
-                prompt,
-            ],
-            cwd=str(self.repo_root),
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_sec,
+        # Save pre-state to detect changes
+        pre_content = (
+            candidate_path.read_text(encoding="utf-8")
+            if candidate_path.exists()
+            else ""
         )
+
+        # Write detailed task to a file Codex can read
+        task_path = self.repo_root / ".codex_task.md"
+        task_text = self._build_task(context)
+        task_path.write_text(task_text, encoding="utf-8")
+
+        # Build a SHORT command-line prompt that references the task file
+        rms = context.current_metrics.get("aggregate_rms", "unknown")
+        cli_prompt = (
+            f"Read .codex_task.md for full instructions. "
+            f"Current RMS={rms}. "
+            f"Edit {context.editable_paths[0]} to improve the stitching algorithm. "
+            f"Do not ask questions. Just edit the file."
+        )
+
+        logger.info(
+            "Calling %s exec (model=%s, prompt=%d chars, task=%d chars)",
+            _CODEX_CMD, self.model, len(cli_prompt), len(task_text),
+        )
+
+        try:
+            result = subprocess.run(
+                [
+                    _CODEX_CMD, "exec",
+                    "--full-auto",
+                    "--model", self.model,
+                    cli_prompt,
+                ],
+                cwd=str(self.repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.timeout_sec,
+            )
+        finally:
+            # Clean up task file
+            task_path.unlink(missing_ok=True)
+
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
 
         if result.returncode != 0:
-            raise RuntimeError(f"codex exec failed (rc={result.returncode}): {result.stderr[:500]}")
+            logger.warning(
+                "codex exec returned %d: %s", result.returncode, stderr[:300],
+            )
 
-        return self._parse_output(result.stdout, context)
+        # Detect if Codex actually changed the file
+        post_content = (
+            candidate_path.read_text(encoding="utf-8")
+            if candidate_path.exists()
+            else ""
+        )
+
+        file_changed = post_content.strip() != pre_content.strip()
+
+        if file_changed:
+            # Validate the new content is at least valid Python
+            if "class CandidateStitcher" not in post_content:
+                logger.warning("Codex wrote file without CandidateStitcher. Reverting.")
+                candidate_path.write_text(pre_content, encoding="utf-8")
+                raise RuntimeError(
+                    "Codex wrote non-conforming code (no CandidateStitcher)."
+                )
+
+            hypothesis = self._extract_hypothesis(stdout)
+            logger.info("Codex modified file (%d → %d bytes)", len(pre_content), len(post_content))
+
+            return PatchProposal(
+                hypothesis=hypothesis,
+                diff=stdout[:3000],
+                target_files=context.editable_paths,
+                reasoning=stdout[:2000],
+                full_source=post_content,
+                changes_pre_applied=True,
+            )
+        else:
+            # Codex did NOT edit the file — extract code from stdout
+            logger.warning("Codex did not modify the file. Trying to extract code from stdout.")
+            full_source = self._extract_code_from_output(stdout)
+            if full_source and "class CandidateStitcher" in full_source:
+                return PatchProposal(
+                    hypothesis=self._extract_hypothesis(stdout),
+                    diff=stdout[:3000],
+                    target_files=context.editable_paths,
+                    reasoning=stdout[:2000],
+                    full_source=full_source,
+                    changes_pre_applied=False,
+                )
+            raise RuntimeError(
+                f"Codex produced no usable code. "
+                f"stdout={stdout[:300]}, stderr={stderr[:300]}"
+            )
 
     def analyze_failure(self, context: ExperimentContext, error: str) -> str:
-        """Ask Codex to analyze why a previous iteration failed."""
         prompt = (
-            f"Analyze this autoresearch failure for optical stitching:\n\n"
-            f"Error: {error}\n\n"
-            f"Previous hypothesis: {context.extra.get('last_hypothesis', 'N/A')}\n"
-            f"Current RMS: {context.current_metrics.get('aggregate_rms', 'N/A')}\n"
-            f"Suggest a different approach."
+            f"Analyze failure: {error[:200]}. "
+            f"RMS={context.current_metrics.get('aggregate_rms')}"
         )
-        result = subprocess.run(
-            ["codex", "exec", f"--model={self.model}", f"--approval-mode={self.approval_mode}", prompt],
-            cwd=str(self.repo_root),
-            capture_output=True,
-            text=True,
-            timeout=60.0,
-        )
-        return result.stdout[:2000] if result.returncode == 0 else f"Analysis failed: {result.stderr[:500]}"
+        try:
+            result = subprocess.run(
+                [_CODEX_CMD, "exec", f"--model={self.model}", prompt],
+                cwd=str(self.repo_root),
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                timeout=60.0,
+            )
+            return result.stdout[:2000]
+        except Exception as exc:
+            return f"Analysis failed: {exc}"
 
-    def _build_prompt(self, ctx: ExperimentContext) -> str:
-        """Construct a structured prompt for Codex."""
+    def _build_task(self, ctx: ExperimentContext) -> str:
+        """Write a full task file for Codex to read."""
         lines = [
-            "You are optimizing an optical sub-aperture stitching algorithm.",
+            "# Autoresearch Task",
             "",
-            "## Editable files (you may ONLY modify these):",
-            *[f"  - {p}" for p in ctx.editable_paths],
+            "## Objective",
+            f"Improve `{ctx.editable_paths[0]}` to reduce aggregate RMS.",
             "",
-            "## Forbidden paths (NEVER touch these):",
-            *[f"  - {p}" for p in ctx.forbidden_paths],
+            "## Current Metrics",
+            f"- Aggregate RMS: {ctx.current_metrics.get('aggregate_rms', 'N/A')}",
+            f"- Best RMS: {ctx.best_metrics.get('aggregate_rms', 'N/A')}",
+            f"- Scenarios: {', '.join(ctx.scenario_ids)}",
             "",
-            f"## Current aggregate RMS: {ctx.current_metrics.get('aggregate_rms', 'N/A')}",
-            f"## Best aggregate RMS so far: {ctx.best_metrics.get('aggregate_rms', 'N/A')}",
-            f"## Time budget: {ctx.time_budget_sec:.0f}s per scenario",
+            "## Domain Notes",
+            ctx.domain_notes[:3000],
             "",
         ]
-        if ctx.previous_diff:
-            lines.extend([
-                "## Previous diff (last iteration):",
-                "```diff",
-                ctx.previous_diff[:3000],
-                "```",
-                "",
-            ])
         if ctx.previous_summary:
             lines.extend([
-                f"## Previous attempt summary: {ctx.previous_summary}",
+                "## Previous Attempt",
+                ctx.previous_summary[:1000],
                 "",
             ])
         lines.extend([
-            "## Domain notes:",
-            ctx.domain_notes[:2000],
-            "",
-            "## Current candidate source:",
-            "```python",
-            ctx.candidate_source[:6000],
-            "```",
-            "",
-            "## Instructions:",
-            "1. State your mathematical HYPOTHESIS explicitly.",
-            "2. Modify ONLY the candidate file to implement it.",
-            "3. Use vectorized NumPy/SciPy, no Python loops on pixels.",
-            "4. The reconstruction must call `reconstruct(observations, config)` and return a ReconstructionSurface.",
-            "5. Do NOT touch the scorer, seeds, or trusted stack.",
+            "## Rules",
+            "- ONLY modify the candidate file.",
+            "- Keep class CandidateStitcher with method reconstruct().",
+            "- Return a ReconstructionSurface with correct observed_support_mask.",
+            "- Use NumPy/SciPy vectorized operations.",
+            "- State your hypothesis as a code comment at the top.",
         ])
         return "\n".join(lines)
 
-    def _parse_output(self, stdout: str, ctx: ExperimentContext) -> PatchProposal:
-        """Extract a PatchProposal from Codex output."""
-        # Codex exec applies changes directly in the worktree.
-        # We read the modified file back.
-        hypothesis = "Agent-proposed optimization (extracted from Codex output)"
-        # Try to extract hypothesis from stdout
+    @staticmethod
+    def _extract_hypothesis(stdout: str) -> str:
         for line in stdout.splitlines():
-            if line.strip().lower().startswith("hypothesis:"):
-                hypothesis = line.split(":", 1)[1].strip()
-                break
+            low = line.lower().strip()
+            if low.startswith("hypothesis:") or low.startswith("# hypothesis"):
+                return line.split(":", 1)[-1].strip()
+        return "Agent-proposed optimization (Codex)"
 
-        return PatchProposal(
-            hypothesis=hypothesis,
-            diff=stdout[:5000],
-            target_files=ctx.editable_paths,
-            reasoning=stdout[:2000],
-        )
+    @staticmethod
+    def _extract_code_from_output(stdout: str) -> str | None:
+        """Try to extract a Python code block from Codex stdout."""
+        import re
+        blocks = re.findall(r"```python\s*\n(.*?)```", stdout, re.DOTALL)
+        if blocks:
+            return max(blocks, key=len).strip()
+        # Fallback: find lines that look like Python
+        lines = stdout.splitlines()
+        start = None
+        for i, line in enumerate(lines):
+            if line.strip().startswith(("from ", "import ", '"""', "class ")):
+                start = i
+                break
+        if start is not None:
+            return "\n".join(lines[start:])
+        return None

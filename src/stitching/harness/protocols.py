@@ -17,10 +17,6 @@ from stitching.contracts import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Algorithm protocol – what every candidate must implement
-# ---------------------------------------------------------------------------
-
 @runtime_checkable
 class CandidateAlgorithm(Protocol):
     """Contract that every editable stitching candidate must satisfy."""
@@ -33,10 +29,6 @@ class CandidateAlgorithm(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
-# Agent protocol – what every backend (Codex, OpenCode, …) must expose
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
 class ExperimentContext:
     """Read-only context handed to the agent for a single iteration."""
@@ -47,7 +39,7 @@ class ExperimentContext:
     best_metrics: dict[str, float]
     previous_diff: str | None
     previous_summary: str | None
-    candidate_source: str  # current candidate_current.py content
+    candidate_source: str
     editable_paths: tuple[str, ...]
     forbidden_paths: tuple[str, ...]
     scenario_ids: tuple[str, ...]
@@ -60,10 +52,13 @@ class ExperimentContext:
 class PatchProposal:
     """Structured output from an agent backend."""
 
-    hypothesis: str  # mandatory scientific hypothesis
-    diff: str  # unified diff or full file content
+    hypothesis: str
+    diff: str
     target_files: tuple[str, ...]
     reasoning: str
+    # --- NEW: full source code to write to disk ---
+    full_source: str | None = None
+    changes_pre_applied: bool = False  # True if backend already wrote to disk (Codex)
     estimated_improvement: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -88,10 +83,6 @@ class AgentBackend(Protocol):
         ...
 
 
-# ---------------------------------------------------------------------------
-# Run manifest and result schemas
-# ---------------------------------------------------------------------------
-
 class RunVerdict(Enum):
     ACCEPTED = "accepted"
     REJECTED_REGRESSION = "rejected_regression"
@@ -99,6 +90,7 @@ class RunVerdict(Enum):
     REJECTED_TIMEOUT = "rejected_timeout"
     REJECTED_CRASH = "rejected_crash"
     REJECTED_EMPTY = "rejected_empty"
+    REJECTED_SYNTAX = "rejected_syntax"
 
 
 @dataclass(frozen=True)

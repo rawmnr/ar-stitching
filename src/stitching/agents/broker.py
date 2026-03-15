@@ -7,12 +7,16 @@ from typing import Any
 
 from stitching.agents.codex_cli import CodexCliBackend
 from stitching.agents.opencode_cli import OpenCodeCliBackend
+from stitching.agents.openai_direct import OpenAiDirectBackend
+from stitching.agents.simulated import SimulatedAgentBackend
 from stitching.harness.protocols import AgentBackend
 
 
 BACKEND_REGISTRY: dict[str, type] = {
     "codex": CodexCliBackend,
     "opencode": OpenCodeCliBackend,
+    "simulated": SimulatedAgentBackend,
+    "openai-direct": OpenAiDirectBackend,
 }
 
 
