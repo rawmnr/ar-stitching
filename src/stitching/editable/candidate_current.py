@@ -42,22 +42,34 @@ class CandidateStitcher:
             source_observation_ids.append(observation.observation_id)
             tile_centers.append(observation.center_xy)
 
-            global_y, global_x, local_y, local_x = placement_slices(
-                observation.global_shape,
-                observation.tile_shape,
-                observation.center_xy,
-            )
+            # Use robust integer slicing (rounding) to handle sub-pixel pose error/jitter
+            center_x, center_y = float(observation.center_xy[0]), float(observation.center_xy[1])
+            tile_rows, tile_cols = observation.tile_shape
 
-            local_mask = np.asarray(observation.valid_mask, dtype=bool)[local_y, local_x]
+            top = int(round(center_y - (tile_rows - 1) / 2.0))
+            left = int(round(center_x - (tile_cols - 1) / 2.0))
+            bottom = top + tile_rows
+            right = left + tile_cols
+
+            gy_start, gy_end = max(0, top), min(global_shape[0], bottom)
+            gx_start, gx_end = max(0, left), min(global_shape[1], right)
+
+            ly_start, lx_start = max(0, -top), max(0, -left)
+            ly_end = ly_start + (gy_end - gy_start)
+            lx_end = lx_start + (gx_end - gx_start)
+
+            if gy_end <= gy_start or gx_end <= gx_start:
+                continue
+
+            local_mask = np.asarray(observation.valid_mask, dtype=bool)[ly_start:ly_end, lx_start:lx_end]
             if not local_mask.any():
                 continue
 
             valid_rows, valid_cols = np.nonzero(local_mask)
-            global_rows = global_y.start + valid_rows
-            global_cols = global_x.start + valid_cols
+            global_rows = gy_start + valid_rows
+            global_cols = gx_start + valid_cols
             linear_indices = np.ravel_multi_index((global_rows, global_cols), global_shape)
-            local_values = np.asarray(observation.z, dtype=float)[local_y, local_x][valid_rows, valid_cols]
-
+            local_values = np.asarray(observation.z, dtype=float)[ly_start:ly_end, lx_start:lx_end][valid_rows, valid_cols]
             contributions_idx.append(linear_indices)
             contributions_val.append(local_values)
             contributions_obs.append(np.full(linear_indices.shape, obs_idx, dtype=int))
