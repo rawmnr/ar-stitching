@@ -1,0 +1,130 @@
+# ==============================================================================
+# Scenario Template: Exhaustive configuration for ar-stitching
+# ==============================================================================
+
+# Unique identifier for the scenario
+scenario_id: full_template_example
+
+# Descriptive name for logs and reports
+description: Template scenario with all possible high-fidelity and automated parameters.
+
+# ------------------------------------------------------------------------------
+# 1. Geometry and Scan Plan
+# ------------------------------------------------------------------------------
+
+# Shape of the global reconstruction grid [rows, cols]
+grid_shape: [64, 64]
+
+# Shape of the local detector tile [rows, cols]
+tile_shape: [32, 32]
+
+# Size of one pixel in millimeters (or arb units)
+pixel_size: 1.0
+
+# OPTION A: Manual scan offsets (relative to global grid center)
+# scan_offsets:
+#   - [-10.0, -10.0]
+#   - [10.0, 10.0]
+
+# OPTION B: Automated pattern generation (used if scan_offsets is omitted)
+pattern_type: grid        # 'grid' or 'annular'
+overlap_fraction: 0.25    # Target overlap between adjacent tiles (0.0 to 1.0)
+annular_rings: 2          # (For 'annular' only) number of concentric rings
+
+# Rotation angles for each observation (tuple, repeats if shorter than scan_offsets)
+rotation_deg: [0.0]
+
+# Deterministic seed for all stochastic processes (noise, drift, jitter)
+seed: 42
+
+# ------------------------------------------------------------------------------
+# 2. Trusted Truth Surface Generation
+# ------------------------------------------------------------------------------
+
+# Basis family for the truth surface: 'legendre' (square) or 'zernike' (circular)
+truth_basis: zernike
+
+# Coefficients for the basis. 
+# For Legendre: 2D array. For Zernike: flat list (Noll indexing by default).
+truth_coefficients: [0.0, 0.0, 0.0, 0.5] # Focus (Z4)
+
+# Shape of the global truth mask (optional)
+truth_pupil: circular     # 'circular' or omit for full square grid
+truth_radius: 0.45        # Radius as fraction of min(grid_shape)
+
+# ------------------------------------------------------------------------------
+# 3. High-Fidelity Digital Twin Effects
+# ------------------------------------------------------------------------------
+
+# Optical pre-filtering (Gaussian sigma in pixels)
+# Simulates MTF and pixel fill factor integration
+optical_psf_sigma: 0.8
+
+# Piece deformation over time (Bending/Thermal drift)
+# Simulates slow change of the piece during the scan sequence.
+# Coefficients follow Zernike Noll indexing (Z1=Piston, Z4=Focus, Z5/6=Astig, Z7/8=Coma).
+# The deformation increases linearly from 0 to these values across the scan.
+surface_drift_coefficients: [0.0, 0.0, 0.0, 0.05, 0.02, -0.01, 0.01, 0.005]
+
+# Legacy single-mode focus bending (used if surface_drift_coefficients is omitted)
+# surface_bending_drift: 0.05
+
+# Polishing marks (Mid-spatial frequency ripples)
+# RMS magnitude of periodic perturbations
+mid_spatial_ripple_std: 0.02
+
+# ------------------------------------------------------------------------------
+# 4. Instrument and Pose Errors
+# ------------------------------------------------------------------------------
+
+# Detector window shape
+detector_pupil: circular
+detector_radius_fraction: 0.45
+
+# SNR drop at detector boundaries
+detector_edge_roll_off: 3.0 # Width of soft boundary in pixels
+
+# Pose Error Components
+realized_pose_bias_xy: [0.1, -0.05] # Systematic calibration offset
+realized_pose_drift_std: 0.05       # Correlated random walk (mechanical drift)
+realized_pose_error_std: 0.1        # Independent pixel jitter
+
+# Sampling Quality
+interpolation_order: 3              # 1: Bilinear, 3: Bicubic (high precision)
+geometric_retrace_error: 0.2        # Field distortion (coordinate shift at edges)
+
+# ------------------------------------------------------------------------------
+# 5. Noise and Nuisances
+# ------------------------------------------------------------------------------
+
+# High-frequency white noise
+gaussian_noise_std: 0.01
+
+# Sparse outliers (dead pixels, spikes)
+outlier_fraction: 0.001
+
+# Spectral Low-Frequency Noise (Fringe Z1 to Z15)
+# Simulates instabilities like air turbulence or vibration
+low_frequency_noise_std: 0.05
+
+# Classic scalar nuisances (detector-specific)
+subaperture_dc_step: 0.05 # Slowly varying piston drift
+subaperture_tip: 0.1
+subaperture_tilt: -0.05
+
+# ------------------------------------------------------------------------------
+# 6. Evaluation Policy
+# ------------------------------------------------------------------------------
+
+# Baseline algorithm to use in the harness ('mean' or 'median')
+baseline_name: mean
+
+# Ignore piston (DC) in RMS/MAE calculation (useful for flat surfaces)
+ignore_piston: true
+
+# ------------------------------------------------------------------------------
+# 7. Arbitrary Metadata
+# ------------------------------------------------------------------------------
+metadata:
+  instrument_name: VirtualInterferometer_v2
+  operator: gemini_cli

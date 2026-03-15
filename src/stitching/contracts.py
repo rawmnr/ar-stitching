@@ -120,6 +120,26 @@ class ScenarioConfig:
         field_names = {field_info.name for field_info in fields(cls)}
         config_kwargs: dict[str, Any] = {}
 
+        # Handle automated scan plan generation
+        if "scan_offsets" not in payload and "pattern_type" in payload:
+            from stitching.trusted.scan.generation import generate_annular_scan_plan, generate_grid_scan_plan
+            
+            p_type = payload["pattern_type"]
+            grid_shape = tuple(payload["grid_shape"])
+            tile_shape = tuple(payload.get("tile_shape", grid_shape))
+            overlap = float(payload.get("overlap_fraction", 0.2))
+            seed = int(payload.get("seed", 0))
+            
+            if p_type == "grid":
+                offsets = generate_grid_scan_plan(grid_shape, tile_shape, overlap, seed)
+            elif p_type == "annular":
+                num_rings = int(payload.get("annular_rings", 2))
+                offsets = generate_annular_scan_plan(grid_shape, tile_shape, overlap, num_rings, seed)
+            else:
+                raise ValueError(f"Unsupported pattern_type '{p_type}'.")
+            
+            payload["scan_offsets"] = offsets
+
         for field_info in fields(cls):
             field_name = field_info.name
             if field_name == "metadata":

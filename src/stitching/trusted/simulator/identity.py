@@ -119,27 +119,42 @@ def simulate_identity_observations(
     observations: list[SubApertureObservation] = []
     tile_shape = config.effective_tile_shape
 
-    # Pre-filter truth with optical PSF if requested (Fill factor / Optical smoothing)
+    # 1. Pre-filter truth with optical PSF (Fill factor / Optical smoothing)
     psf_sigma = float(config.metadata.get("optical_psf_sigma", 0.0))
     effective_truth_z = apply_optical_psf(truth.z, psf_sigma) if psf_sigma > 0.0 else truth.z
+
+    # 2. Add Mid-Spatial Ripples (Polishing marks/MSF) to the global surface
+    # They are fixed in the piece XY frame.
+    ripple_mag = float(config.metadata.get("mid_spatial_ripple_std", 0.0))
+    if ripple_mag > 0.0:
+        effective_truth_z = add_mid_spatial_ripples(effective_truth_z, ripple_mag, seed=config.seed + 50_000)
+
+    # 3. Pre-calculate the total surface drift field if coefficients are provided
+    drift_coeffs = config.metadata.get("surface_drift_coefficients")
+    if drift_coeffs is not None:
+        from stitching.trusted.bases.zernike import generate_zernike_surface
+        drift_surface_max = generate_zernike_surface(np.array(drift_coeffs, dtype=float), config.grid_shape)
+    else:
+        # Fallback to legacy single scalar focus bending if present
+        deform_mag = float(config.metadata.get("surface_bending_drift", 0.0))
+        if deform_mag != 0.0:
+            yy, xx = np.indices(config.grid_shape, dtype=float)
+            ry = 2.0 * (yy - (config.grid_shape[0]-1)/2.0) / (config.grid_shape[0]-1)
+            rx = 2.0 * (xx - (config.grid_shape[1]-1)/2.0) / (config.grid_shape[1]-1)
+            drift_surface_max = deform_mag * (rx**2 + ry**2)
+        else:
+            drift_surface_max = None
 
     for index, offset in enumerate(config.scan_offsets):
         rotation_deg = float(config.rotation_deg[min(index, len(config.rotation_deg) - 1)])
         center_xy = _tile_center(config.grid_shape, offset)
         realized_center_xy = _realized_pose_error(center_xy, config, index)
 
-        # Time-varying Surface Deformation (Bending drift)
-        # We perturb the truth values during extraction for this specific observation
-        deform_mag = float(config.metadata.get("surface_bending_drift", 0.0))
-        if deform_mag != 0.0:
-            # Simple focus drift over time
-            yy, xx = np.indices(config.grid_shape, dtype=float)
-            ry = 2.0 * (yy - (config.grid_shape[0]-1)/2.0) / (config.grid_shape[0]-1)
-            rx = 2.0 * (xx - (config.grid_shape[1]-1)/2.0) / (config.grid_shape[1]-1)
-            r2 = rx**2 + ry**2
-            # Bending increases with index
-            deformation = deform_mag * (index / max(len(config.scan_offsets)-1, 1)) * r2
-            current_truth_z = effective_truth_z + deformation
+        # Time-varying Surface Deformation (Slowly varying modes: Focus, Astig, Coma...)
+        if drift_surface_max is not None:
+            # Linear drift from 0 to drift_surface_max across the sequence
+            time_factor = index / max(len(config.scan_offsets) - 1, 1)
+            current_truth_z = effective_truth_z + time_factor * drift_surface_max
         else:
             current_truth_z = effective_truth_z
 
@@ -175,11 +190,6 @@ def simulate_identity_observations(
             roll_off = float(config.metadata.get("detector_edge_roll_off", 0.0))
             if roll_off > 0.0:
                 z, _ = apply_edge_degradation(z, valid_mask, roll_off_width=roll_off, seed=config.seed + index + 40_000)
-
-        # 2. Add Mid-Spatial Ripples (Polishing marks)
-        ripple_mag = float(config.metadata.get("mid_spatial_ripple_std", 0.0))
-        if ripple_mag > 0.0:
-            z = add_mid_spatial_ripples(z, ripple_mag, seed=config.seed + index + 50_000)
 
         # 3. Add Low-Frequency Noise (Z1-Z15 Fringe)
         lf_magnitude = float(config.metadata.get("low_frequency_noise_std", 0.0))
