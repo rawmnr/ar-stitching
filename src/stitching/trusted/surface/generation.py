@@ -82,7 +82,7 @@ def generate_identity_surface(config: ScenarioConfig) -> SurfaceTruth:
         from stitching.trusted.surface.footprint import circular_pupil_mask
         mask = circular_pupil_mask(config.grid_shape, radius_fraction=float(metadata.get("truth_radius", 0.45)))
         truth = SurfaceTruth(
-            z=np.where(mask, truth.z, 0.0),
+            z=np.where(mask, truth.z, np.nan),
             valid_mask=mask,
             pixel_size=truth.pixel_size,
             units=truth.units,
@@ -90,12 +90,13 @@ def generate_identity_surface(config: ScenarioConfig) -> SurfaceTruth:
         )
 
     return SurfaceTruth(
-        z=truth.z,
+        z=np.where(truth.valid_mask, truth.z, np.nan),
         valid_mask=truth.valid_mask,
         pixel_size=truth.pixel_size,
         units=truth.units,
         metadata={
             **truth.metadata,
-            "surface_model": basis_name if "truth_basis" in metadata else "legendre_structured_low_order",
+            "surface_model": "legendre_structured_low_order" if "truth_basis" not in metadata else basis_name,
         },
     )
+

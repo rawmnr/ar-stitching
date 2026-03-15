@@ -191,6 +191,9 @@ def simulate_identity_observations(
             if roll_off > 0.0:
                 z, _ = apply_edge_degradation(z, valid_mask, roll_off_width=roll_off, seed=config.seed + index + 40_000)
 
+        # 2. Add Mid-Spatial Ripples (Polishing marks)
+        # (Added to current_truth_z before extraction, so no change here)
+
         # 3. Add Low-Frequency Noise (Z1-Z15 Fringe)
         lf_magnitude = float(config.metadata.get("low_frequency_noise_std", 0.0))
         if lf_magnitude > 0.0:
@@ -211,7 +214,7 @@ def simulate_identity_observations(
         slope_retrace = float(config.metadata.get("slope_retrace_error", 0.0))
         z = apply_retrace_error(z, config.retrace_error, slope_magnitude=slope_retrace)
         
-        z = np.where(valid_mask, z, 0.0)
+        z = np.where(valid_mask, z, np.nan)
 
         observations.append(
             SubApertureObservation(

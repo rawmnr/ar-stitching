@@ -17,9 +17,14 @@ def validate_surface_alignment(z: np.ndarray, valid_mask: np.ndarray) -> None:
         raise ValueError("Values and valid_mask must have identical shapes.")
     if valid_mask.dtype != np.bool_:
         raise ValueError("valid_mask must be boolean.")
-    if not np.allclose(z[~valid_mask], 0.0, atol=ZERO_OUTSIDE_MASK_ATOL, rtol=0.0):
-        raise ValueError("Values outside valid_mask must be zero.")
 
+    # Values outside mask must be either 0.0 or NaN
+    outside_values = z[~valid_mask]
+    if outside_values.size > 0:
+        is_zero = np.isclose(outside_values, 0.0, atol=ZERO_OUTSIDE_MASK_ATOL, rtol=0.0)
+        is_nan = np.isnan(outside_values)
+        if not np.all(is_zero | is_nan):
+            raise ValueError("Values outside valid_mask must be zero or NaN.")
 
 def validate_observation_alignment(observation: SubApertureObservation) -> None:
     """Enforce shape and mask/value alignment for trusted observations."""

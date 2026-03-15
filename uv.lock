@@ -15,6 +15,7 @@ name = "ar-stitching"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "pyyaml" },
     { name = "scipy" },
@@ -37,6 +38,7 @@ zernike-alt = [
 [package.metadata]
 requires-dist = [
     { name = "hcipy", marker = "extra == 'basis-extra'" },
+    { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "optiland", marker = "extra == 'optics'" },
     { name = "prysm", marker = "extra == 'zernike-alt'" },

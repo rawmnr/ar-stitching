@@ -23,7 +23,7 @@ def test_zero_effect_hooks_preserve_identity_for_multiple_seeds() -> None:
         truth, observations = simulate_identity_observations(config)
         observation = observations[0]
 
-        assert (observation.z == truth.z).all()
+        assert np.array_equal(observation.z, truth.z, equal_nan=True)
         assert (observation.valid_mask == truth.valid_mask).all()
         assert observation.nuisance_terms["subaperture_dc"] == 0.0
 
@@ -43,7 +43,7 @@ def test_shifted_observation_keeps_value_and_mask_alignment_for_multiple_offsets
 
         assert observation.z.shape == observation.valid_mask.shape
         assert observation.z.shape == observation.tile_shape
-        assert (observation.z[~observation.valid_mask] == 0.0).all()
+        assert np.isnan(observation.z[~observation.valid_mask]).all()
         validate_observation_alignment(observation)
 
 
@@ -61,7 +61,7 @@ def test_boundary_clipping_preserves_alignment_when_pupil_moves_outside_frame() 
 
     assert observation.valid_mask.sum() < truth.valid_mask.sum()
     assert observation.valid_mask.sum() > 0
-    assert (observation.z[~observation.valid_mask] == 0.0).all()
+    assert np.isnan(observation.z[~observation.valid_mask]).all()
     validate_observation_alignment(observation)
 
 
@@ -163,7 +163,7 @@ def test_quarter_turn_rotation_is_applied_to_observation_pixels() -> None:
     _, unrotated_obs = simulate_identity_observations(unrotated_config)
 
     assert rotated_obs[0].rotation_deg == 90.0
-    assert np.allclose(rotated_obs[0].z, np.rot90(unrotated_obs[0].z, k=1), atol=1e-12)
+    assert np.allclose(rotated_obs[0].z, np.rot90(unrotated_obs[0].z, k=1), atol=1e-12, equal_nan=True)
     assert np.array_equal(rotated_obs[0].valid_mask, np.rot90(unrotated_obs[0].valid_mask, k=1))
 
 
@@ -186,7 +186,7 @@ def test_rotation_ninety_then_two_seventy_returns_identity() -> None:
     unrotated_mask = np.rot90(rotated.valid_mask, k=3)
     restored_mask = np.rot90(unrotated_mask, k=1)
 
-    assert np.array_equal(restored_z, rotated.z)
+    assert np.array_equal(restored_z, rotated.z, equal_nan=True)
     assert np.array_equal(restored_mask, rotated.valid_mask)
 
 
@@ -225,14 +225,14 @@ def test_outlier_magnitude_scales_with_signal_amplitude() -> None:
 
 
 def test_outliers_are_applied_only_on_valid_pixels() -> None:
-    z = np.zeros((4, 4), dtype=float)
+    z = np.full((4, 4), np.nan, dtype=float)
     z[1:3, 1:3] = 2.0
     valid_mask = np.zeros((4, 4), dtype=bool)
     valid_mask[1:3, 1:3] = True
 
     corrupted = add_outliers(z, fraction=0.5, magnitude=1.0, seed=0, valid_mask=valid_mask)
 
-    assert np.all(corrupted[~valid_mask] == 0.0)
+    assert np.isnan(corrupted[~valid_mask]).all()
 
 
 def test_outliers_dense_mask_sampling_preserves_count_scale() -> None:

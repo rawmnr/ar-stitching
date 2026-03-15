@@ -63,7 +63,7 @@ def test_zero_bias_noise_outliers_and_retrace_match_identity_output() -> None:
 
     assert (truth_identity.valid_mask == truth_zero.valid_mask).all()
     assert (identity_obs[0].valid_mask == zero_obs[0].valid_mask).all()
-    assert (identity_obs[0].z == zero_obs[0].z).all()
+    assert np.array_equal(identity_obs[0].z, zero_obs[0].z, equal_nan=True)
 
 
 def test_signal_metrics_degrade_on_non_flat_truth_surface() -> None:

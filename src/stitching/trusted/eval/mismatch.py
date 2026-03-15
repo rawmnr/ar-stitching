@@ -41,9 +41,10 @@ def compute_mismatch_map(
             z_view = obs.z[ly, lx]
             m_view = np.asarray(obs.valid_mask, dtype=bool)[ly, lx]
 
-            sum_z[gy, gx][m_view] += z_view[m_view]
-            sum_z2[gy, gx][m_view] += z_view[m_view] ** 2
-            count_z[gy, gx][m_view] += 1
+            sum_z[gy, gx][m_view] += np.where(np.isnan(z_view[m_view]), 0.0, z_view[m_view])
+            sum_z2[gy, gx][m_view] += np.where(np.isnan(z_view[m_view]), 0.0, z_view[m_view] ** 2)
+            # count_z should only count non-nan valid pixels
+            count_z[gy, gx][m_view] += (~np.isnan(z_view[m_view])).astype(int)
         except (ValueError, IndexError):
             continue
 
