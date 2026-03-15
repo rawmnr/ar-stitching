@@ -2,54 +2,50 @@
 
 ## Scope
 
-This document defines the current trusted simulator behavior for the repository foundation phase.
+This document defines the current trusted simulator behavior for the repository simulation bench.
 
 ## Coordinate Conventions
 
 - Arrays use `z[y, x]` indexing.
 - `x` increases to the right and `y` increases downward.
 - `center_xy` is the geometric center of a tile in global pixel-center coordinates.
-- `translation_xy` is derived from `center_xy` relative to the geometric center of the global grid.
 - The trusted simulator supports float `scan_offsets` with sub-pixel interpolation.
 - Bilinear interpolation is used for non-integer tile extraction; exact slicing is used for integer alignment.
-- Positive `dx` shifts content right. Positive `dy` shifts content down.
-- Rotation is stored as metadata and physically applied using `np.rot90` (limited to 90-degree increments in this phase).
+- Rotation is stored as metadata and physically applied using `np.rot90` (90-degree increments).
 
 ## Data Objects
 
-- `SurfaceTruth` is the global reference field for evaluation.
-- `SubApertureObservation` is a local detector tile with known pose in the global frame.
-- `ReconstructionSurface` is intended to be a global-frame reconstruction aligned to the truth grid.
-- `valid_mask` marks which pixels are physically observed and valid for metric computation.
+- `SurfaceTruth`: Global reference field for evaluation.
+- `SubApertureObservation`: Local detector tile with known pose, metadata, and nuisance terms.
+- `valid_mask`: Marks pixels physically observed and valid for metric computation.
 
-## `valid_mask` Semantics
+## `valid_mask` and Pupil Semantics
 
-- `True` means the detector reports a valid sample at that pixel.
-- `False` means the pixel is outside the local tile support or clipped by image borders.
-- Invalid pixels must not contribute to geometry or signal metrics.
-- The trusted simulator zeroes `z` outside `valid_mask` to keep mask/value alignment explicit.
-- Reconstruction support is additionally constrained by the union of observed support when provided.
+- **Detector Pupil**: Observations can have square (full tile) or circular pupils (metadata `detector_pupil: circular`).
+- **Global Masking**: `SurfaceTruth.valid_mask` defines the global field of interest.
+- **Clipping**: Observations are clipped by both global and local pupil masks.
+- Invalid pixels must not contribute to metrics; the simulator zeroes `z` outside `valid_mask`.
 
 ## Order of Simulation Operations
 
-1. Create the global truth surface.
-2. Resolve the commanded tile center in the global frame.
-3. Apply `realized_pose_error` (optional metadata `realized_pose_error_std`).
-4. Extract the local tile using `extract_tile` (bilinear interpolation for sub-pixel, exact for integer).
-5. Apply `reference_bias`, `nuisance_terms` (including tip/tilt/focus), Gaussian noise, outliers, and retrace hook.
-6. Zero all pixels outside `valid_mask`.
-7. Apply discrete rotation (90-degree increments).
+1. **Truth Generation**: Create the global truth surface (Legendre or Zernike).
+2. **Pose Resolution**: Resolve commanded tile center and apply `realized_pose_error` (bias, drift, jitter).
+3. **Tile Extraction**: Extract local tile via `extract_tile` (bilinear or exact).
+4. **Instrument Masking**: Apply detector pupil mask (optional circular).
+5. **Low-Frequency Noise**: Add Zernike-based (Fringe Z1-Z15) noise.
+6. **Global Drift**: Apply spatial drift field (evaluated at global tile location).
+7. **Nuisance terms**: Apply Tip, Tilt, Focus, and DC (piston).
+8. **High-Frequency Noise**: Add Gaussian noise and outliers.
+9. **Retrace**: Apply scalar and/or slope-dependent retrace distortion.
+10. **Finalization**: Zero outside `valid_mask` and apply discrete rotation.
 
 ## Determinism
 
 - All stochastic processes (noise, outliers, pose error) use explicit seeds derived from `ScenarioConfig.seed`.
-- Zero bias, zero noise, zero outliers, and zero retrace must preserve the identity result exactly for integer offsets.
-- No stochastic resampling is used in this phase except for explicitly requested pose error.
+- Zero-perturbation cases (no noise, no bias, integer offsets) preserve the identity result exactly.
 
 ## Current Limitations
 
-- Rotation is still restricted to 90-degree increments in this phase.
-- Interpolation for sub-pixel offsets introduces minor smoothing (bilinear).
-- Geometry metrics are relaxed (e.g. 0.99 IoU) to accommodate interpolation artifacts at mask boundaries.
-- Thermal drift and spatial bias are modeled as additive nuisance terms.
-- Reconstruction is still a simple place-and-average baseline.
+- Rotation is restricted to 90-degree increments.
+- Interpolation introduces minor bilinear smoothing for sub-pixel offsets.
+- Higher-order interpolation (bicubic/splines) is not yet supported.

@@ -15,12 +15,14 @@ This document defines how trusted basis-driven surface generation is structured 
 - `generate_legendre_surface(coefficients, shape)`
 - `sample_legendre_basis_2d(shape, max_degree_y, max_degree_x)`
 - `surface_from_basis(shape, pixel_size, basis_name, coefficients, units="arb")`
-- `generate_zernike_surface(...)` for optional circular-pupil backends
+- `generate_zernike_surface(coefficients, shape, indexing="noll", backend="auto")`
+    - Supports `noll`, `fringe`, and `ansi` indexing.
 
 ## Basis Semantics
 
-- Legendre basis is implemented as a tensor product of 1D Legendre polynomials on normalized axes in `[-1, 1]`.
-- Zernike/Fringe generation is treated as circular-pupil-only logic and remains optional.
+- **Legendre Basis**: Implemented as a tensor product of 1D Legendre polynomials on normalized axes in `[-1, 1]`. Default for square global grids and local detector tiles.
+- **Zernike Basis**: Circular-pupil logic. Used for both structured truth generation and **Low-Frequency Noise (Z1-Z15)** simulation.
+- **Fringe Indexing**: Frequently used for low-order optical noise (e.g., Z1: Piston, Z4: Focus).
 - Returned surfaces must always be plain NumPy arrays in repo-owned contracts.
 
 ## Backend Policy
@@ -34,6 +36,6 @@ This document defines how trusted basis-driven surface generation is structured 
 ## Current Limitations
 
 - Only Legendre and internal Zernike generation are guaranteed to be available in the default install.
-- No Zernike fit pipeline is wired into the simulator yet.
+- No Zernike fit pipeline is wired into the simulator yet (only generation).
 - No backend-specific objects are allowed to leak outside `trusted/bases/`.
 - Prysm remains an installation extra, not an active trusted backend.
