@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document defines the coordinate-frame and interpolation contract for observations and reconstructions.
+This document defines the coordinate-frame, interpolation, and NaN semantics for observations and reconstructions.
 
 ## Objects and Frames
 
@@ -12,28 +12,26 @@ This document defines the coordinate-frame and interpolation contract for observ
 
 ## Translation and Interpolation Semantics
 
-- `center_xy` is the geometric center of the detector tile expressed in global pixel-center coordinates.
-- **Sub-pixel Support**: The trusted simulator supports float `center_xy`.
-- **Bilinear Interpolation**: When `center_xy` is non-integer (or non-half-integer for even tiles), bilinear interpolation is used for both surface values and the mask (thresholded at 0.5).
-- **Exact Path**: If `center_xy` aligns perfectly with integer pixel placement, exact slicing is used to avoid interpolation artifacts.
-- `translation_xy` is a derived quantity: `center_xy - global_geometric_center`.
-- A positive shift means the detector center moves right/down in the global frame.
+- `center_xy`: Geometric center of the detector tile in global pixel-center coordinates.
+- **Bicubic Interpolation**: By default, the simulator uses order 3 interpolation for high-fidelity surface sampling.
+- **Fine Rotation**: Arbitrary float `rotation_deg` is supported and integrated into the coordinate sampling process.
+- **Exact Path**: If `rotation_deg=0` and the center is integer-aligned, exact slicing is used to preserve signal integrity.
 
-## Pupil and Mask Semantics
+## `valid_mask` and NaN Semantics
 
-- **Detector Pupil**: Observations can have square (full tile) or circular pupils. The `valid_mask` reflects this instrument constraint.
-- **Global Masking**: `SurfaceTruth.valid_mask` defines the global field of interest (e.g., a large circular mirror).
-- **Clipping**: Observations are clipped both by the global truth mask and the detector's local pupil mask.
+- **Explicit Missing Data**: The repository uses `np.nan` to represent pixels outside the observed or valid support.
+- **SurfaceTruth**: Areas outside the global pupil are `NaN`.
+- **Observations**: Pixels outside the local tile or detector pupil are `NaN`.
+- **Validation**: The trusted validator enforces that `z[~valid_mask]` is `NaN` (though `0.0` is tolerated for compatibility).
+- **Averaging**: Stitching algorithms must use `nanmean` or mask-aware logic to avoid propagating `NaN` into the final reconstruction.
 
-## `valid_mask` Semantics
+## Reconstruction Constraints
 
-- Observation `valid_mask` marks where the detector measured a valid sample after footprinting, interpolation, and clipping.
-- Reconstruction `valid_mask` marks where the reconstruction artifact claims valid support in the global frame.
-- `ReconstructionSurface.observed_support_mask` is the union of physically observed support.
-- A reconstruction is not allowed to claim `valid_mask=True` outside `observed_support_mask`.
-- Values outside any `valid_mask` must be zero by trusted contract.
+- `ReconstructionSurface.observed_support_mask`: The union of all physically observed pixels.
+- A reconstruction **must not** claim valid data (non-NaN) outside this observed support.
+- Mismatch diagnostics are only computed where at least two observations overlap.
 
 ## Current Limitations
 
-- Rotation is still restricted to 90-degree increments in this phase.
-- No advanced sub-pixel registration (e.g., shift-and-add) or spline interpolation is implemented yet.
+- Higher-order interpolation (e.g., Lanczos) is not yet implemented.
+- The global grid is assumed to be uniform and rectangular.

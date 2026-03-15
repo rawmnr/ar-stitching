@@ -2,67 +2,43 @@
 
 ## Scope
 
-This document defines the current trusted evaluation contract for geometry, signal, and mismatch metrics.
+This document defines the trusted evaluation contract for geometry, signal, and internal consistency (mismatch) metrics.
 
 ## Geometry Metrics
 
-The trusted evaluator computes:
+Geometry metrics validate the structural integrity of the reconstruction footprint:
+- `footprint_iou`: Intersection over Union of valid masks.
+- `valid_pixel_recall` / `precision`.
+- `largest_component_ratio`: Detects fragmented reconstructions.
+- `hole_ratio`: Detects internal voids in the valid area.
 
-- `footprint_iou`
-- `valid_pixel_recall`
-- `valid_pixel_precision`
-- `largest_component_ratio`
-- `hole_ratio`
+**Hard Gate**: `footprint_iou >= 0.99`. This is relaxed from 1.0 to support sub-pixel interpolation artifacts at mask boundaries.
 
-These are computed from `truth.valid_mask` and `candidate.valid_mask`.
+## Signal Metrics (Truth-based)
 
-## Hard Gates
+Signal metrics are computed on the intersection of truth and candidate valid masks:
+- `rms_on_valid_intersection`: Root Mean Square error.
+- `mae_on_valid_intersection`: Mean Absolute Error.
+- `hf_retention`: Laplacian-based proxy for high-frequency preservation.
 
-Geometry is a blocking acceptance layer. A candidate must first preserve the valid footprint.
+**Piston Correction**: If `ignore_piston: true` is set in the scenario, the average height is removed from both reference and candidate before scoring.
 
-Current acceptance logic in the scaffold is:
+## Mismatch Diagnostics (Consistency-based)
 
-- `footprint_iou >= 0.99` (Relaxed from 1.0 to support sub-pixel interpolation artifacts)
-- `valid_pixel_recall >= 0.99`
-- `valid_pixel_precision >= 0.99`
-- `largest_component_ratio >= 0.99`
-- `hole_ratio <= 1e-4`
-- `mae_on_valid_intersection <= signal_acceptance_threshold(...)`
+Mismatch metrics assess internal agreement in overlap regions without requiring ground truth:
+- `mismatch_rms` / `mean` / `median` / `p95` / `max`.
 
-These gates are intentionally strict to ensure geometry and footprint integrity are first-order constraints.
+Mismatch is defined as the **standard deviation** of all valid observation contributions at a global pixel.
+- Observations are binned to the nearest integer global pixel to avoid re-interpolation noise.
+- Pixels covered by only one observation have zero mismatch by definition.
 
-## Signal Metrics
+## NaN Semantics in Metrics
 
-Signal metrics are computed only on `truth.valid_mask & candidate.valid_mask`:
-
-- `rms_on_valid_intersection`
-- `mae_on_valid_intersection`
-- `hf_retention` (Laplacian-agreement proxy for high-frequency retention)
-
-Pixels outside the valid overlap are excluded from signal scoring by contract.
-
-## Mismatch Diagnostics (Internal Consistency)
-
-Mismatch metrics assess the internal consistency of the reconstruction in overlap regions without requiring ground truth:
-
-- `mismatch_rms` (RMS disagreement between overlapping observations)
-- `mismatch_mean`
-- `mismatch_median`
-- `mismatch_max`
-- `mismatch_p95` (95th percentile of per-pixel mismatch)
-
-Mismatch is defined as the standard deviation of valid observation contributions at each global pixel. Observations are binned to the nearest integer-compatible global pixel to avoid re-interpolation artifacts in this diagnostic.
-
-## Why RMS Alone Is Insufficient
-
-- RMS can look good while the predicted footprint is too small.
-- RMS can improve if invalid or difficult regions are silently dropped.
-- RMS does not detect holes, fragmentation, or disconnected valid regions.
-- RMS does not protect high-frequency content on its own.
-- Mismatch detects internal alignment errors even when ground truth is unavailable or bias is present.
+- All metrics MUST ignore `NaN` values.
+- Signal scoring is strictly masked by the `valid_mask` intersection.
+- Propagation of a single `NaN` into a summary metric indicates a contract violation in the mask-handling logic.
 
 ## Known Current Limitations
 
-- `hf_retention` is a lightweight Laplacian-agreement proxy, not a full optical MTF measure.
-- Sub-pixel registration logic is now supported, which relaxes geometry thresholds slightly.
-- The current truth surface is still low-order and deterministic, so richer optical failure modes are not yet stressed.
+- High-frequency retention is a proxy, not a formal MTF transfer function.
+- Mismatch diagnostics do not currently account for local tilt correction before binning.
