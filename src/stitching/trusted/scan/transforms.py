@@ -103,7 +103,13 @@ def _extract_tile_sampled(
     order: int,
     perturbation: np.ndarray | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Perform coordinate-mapped sampling for rotation and sub-pixel placement."""
+    """Perform coordinate-mapped sampling for rotation and sub-pixel placement.
+
+    `global_surface` may contain NaNs outside `global_mask`. For interpolated sampling,
+    those NaNs must not be fed directly to `map_coordinates`, otherwise spline
+    prefiltering spreads NaNs through the whole sampled tile. We therefore sample a
+    zero-filled surface and recover validity from the separately sampled mask.
+    """
 
     rows, cols = tile_shape
     angle_rad = math.radians(rotation_deg)
@@ -127,13 +133,17 @@ def _extract_tile_sampled(
         coords[0] += perturbation[0].ravel() # dy
         coords[1] += perturbation[1].ravel() # dx
 
-    # Map surface (order 1=bilinear, 3=bicubic)
-    z = map_coordinates(global_surface, coords, order=order, mode="constant", cval=0.0)
+    # Sample a zero-filled surface so masked-out NaNs do not poison interpolation.
+    # Validity is tracked independently through the sampled mask below.
+    filled_surface = np.where(np.asarray(global_mask, dtype=bool), global_surface, 0.0)
+    z = map_coordinates(filled_surface, coords, order=order, mode="constant", cval=0.0)
     z = z.reshape(tile_shape)
 
     # Map mask (always bilinear/nearest-like via threshold for stability)
     mask_f = map_coordinates(global_mask.astype(float), coords, order=1, mode="constant", cval=0.0)
     valid_mask = mask_f.reshape(tile_shape) >= 0.5
+
+    z = np.where(valid_mask, z, 0.0)
 
     return z, valid_mask
 

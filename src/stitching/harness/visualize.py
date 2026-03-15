@@ -11,6 +11,12 @@ from stitching.trusted.simulator.identity import simulate_identity_observations
 from stitching.trusted.scan.transforms import extract_tile
 
 
+def _masked_image(values: np.ndarray, valid_mask: np.ndarray) -> np.ma.MaskedArray:
+    """Return a masked view that hides pixels outside the provided support."""
+
+    return np.ma.masked_where(~np.asarray(valid_mask, dtype=bool), np.asarray(values, dtype=float))
+
+
 def plot_scenario_report(
     config: ScenarioConfig,
     truth: SurfaceTruth,
@@ -19,14 +25,15 @@ def plot_scenario_report(
 ) -> None:
     """Generate a comprehensive visual report of the simulation."""
 
-    num_obs = len(observations)
     fig = plt.figure(figsize=(15, 10))
     plt.suptitle(f"Scenario: {config.scenario_id} - {config.description}", fontsize=16)
+    masked_cmap = plt.get_cmap("viridis").copy()
+    masked_cmap.set_bad(color="#f4f4f4")
 
     # 1. Global Truth Surface + Scan Plan
     ax1 = plt.subplot(2, 3, 1)
     ax1.set_title("Global Truth Surface & Scan Plan")
-    im1 = ax1.imshow(truth.z, cmap="viridis", origin="lower")
+    im1 = ax1.imshow(_masked_image(truth.z, truth.valid_mask), cmap=masked_cmap, origin="lower")
     plt.colorbar(im1, ax=ax1, label="Height")
     
     # Overlay sub-aperture boxes/pupils
@@ -49,22 +56,30 @@ def plot_scenario_report(
     obs = observations[0]
     ax2 = plt.subplot(2, 3, 2)
     ax2.set_title(f"Observation 0 (Instrument view)")
-    im2 = ax2.imshow(obs.z, cmap="viridis", origin="lower")
+    im2 = ax2.imshow(_masked_image(obs.z, obs.valid_mask), cmap=masked_cmap, origin="lower")
     plt.colorbar(im2, ax=ax2)
     ax2.set_xlabel("Local X")
     ax2.set_ylabel("Local Y")
 
     # 3. Discrepancy Map (Obs 0 vs Truth)
     # Extract perfect local truth for comparison
-    local_truth_z, _ = extract_tile(truth.z, truth.valid_mask, obs.tile_shape, obs.center_xy, rotation_deg=obs.rotation_deg)
+    interpolation_order = int(config.metadata.get("interpolation_order", 3))
+    local_truth_z, local_truth_mask = extract_tile(
+        truth.z,
+        truth.valid_mask,
+        obs.tile_shape,
+        obs.center_xy,
+        rotation_deg=obs.rotation_deg,
+        interpolation_order=interpolation_order,
+    )
     
     # Difference (Nuisances + Noise + Drift + Interpolation)
-    # We mask outside the observation mask
-    diff = np.where(obs.valid_mask, obs.z - local_truth_z, 0.0)
-    
+    diff_mask = obs.valid_mask & local_truth_mask & np.isfinite(obs.z) & np.isfinite(local_truth_z)
+    diff = np.zeros(obs.tile_shape, dtype=float)
+    diff[diff_mask] = obs.z[diff_mask] - local_truth_z[diff_mask]
     ax3 = plt.subplot(2, 3, 3)
     ax3.set_title("Diff: Obs 0 - Local Truth")
-    im3 = ax3.imshow(diff, cmap="RdBu_r", origin="lower")
+    im3 = ax3.imshow(_masked_image(diff, diff_mask), cmap=masked_cmap, origin="lower")
     plt.colorbar(im3, ax=ax3, label="Error")
     ax3.set_xlabel("Local X")
 
@@ -74,14 +89,14 @@ def plot_scenario_report(
     
     ax4 = plt.subplot(2, 3, 4)
     ax4.set_title("Mismatch Map (Local Std Dev)")
-    im4 = ax4.imshow(std_map, cmap="magma", origin="lower")
+    im4 = ax4.imshow(_masked_image(std_map, count_z > 1), cmap=masked_cmap, origin="lower")
     plt.colorbar(im4, ax=ax4, label="Std Dev")
     ax4.set_xlabel("X [pixels]")
 
     # 5. Overlap Count
     ax5 = plt.subplot(2, 3, 5)
     ax5.set_title("Overlap Count")
-    im5 = ax5.imshow(count_z, cmap="Blues", origin="lower")
+    im5 = ax5.imshow(_masked_image(count_z, count_z > 0), cmap=masked_cmap, origin="lower")
     plt.colorbar(im5, ax=ax5, label="Count")
     ax5.set_xlabel("X [pixels]")
 

@@ -109,25 +109,37 @@ def simulate_identity_observations(
     """Simulate identity observations without any stitching optimization."""
 
     truth = generate_identity_surface(config)
+    piece_truth_z = np.array(truth.z, copy=True)
+    ripple_mag = float(config.metadata.get("mid_spatial_ripple_std", 0.0))
+    if ripple_mag > 0.0:
+        piece_truth_z = add_mid_spatial_ripples(piece_truth_z, ripple_mag, seed=config.seed + 50_000)
+        piece_truth_z = np.where(truth.valid_mask, piece_truth_z, np.nan)
+
     truth = SurfaceTruth(
-        z=np.array(truth.z, copy=True),
+        z=piece_truth_z,
         valid_mask=np.array(truth.valid_mask, copy=True),
         pixel_size=truth.pixel_size,
         units=truth.units,
-        metadata={"global_truth_shape": tuple(config.grid_shape), "surface_model": truth.metadata["surface_model"]},
+        metadata={
+            "global_truth_shape": tuple(config.grid_shape),
+            "surface_model": truth.metadata["surface_model"],
+        },
     )
     observations: list[SubApertureObservation] = []
     tile_shape = config.effective_tile_shape
 
-    # 1. Pre-filter truth with optical PSF (Fill factor / Optical smoothing)
+    # 1. Pre-filter piece truth with optical PSF (Fill factor / Optical smoothing).
+    # The truth surface carries NaNs outside the physical footprint; filtering those
+    # NaNs directly would poison the whole image.
     psf_sigma = float(config.metadata.get("optical_psf_sigma", 0.0))
-    effective_truth_z = apply_optical_psf(truth.z, psf_sigma) if psf_sigma > 0.0 else truth.z
-
-    # 2. Add Mid-Spatial Ripples (Polishing marks/MSF) to the global surface
-    # They are fixed in the piece XY frame.
-    ripple_mag = float(config.metadata.get("mid_spatial_ripple_std", 0.0))
-    if ripple_mag > 0.0:
-        effective_truth_z = add_mid_spatial_ripples(effective_truth_z, ripple_mag, seed=config.seed + 50_000)
+    if psf_sigma > 0.0:
+        effective_truth_z = apply_optical_psf(
+            np.where(truth.valid_mask, truth.z, 0.0),
+            psf_sigma,
+        )
+        effective_truth_z = np.where(truth.valid_mask, effective_truth_z, np.nan)
+    else:
+        effective_truth_z = truth.z
 
     # 3. Pre-calculate the total surface drift field if coefficients are provided
     drift_coeffs = config.metadata.get("surface_drift_coefficients")

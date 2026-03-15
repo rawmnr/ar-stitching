@@ -178,36 +178,41 @@ def add_mid_spatial_ripples(
     seed: int,
     num_ripples: int = 5,
 ) -> np.ndarray:
-    """Add periodic mid-spatial frequency ripples (polishing marks).
+    """Add axis-aligned polishing marks fixed in the piece frame.
 
-    Sum of 2D sine waves with random orientations and frequencies.
+    The pattern is built from horizontal and vertical stripe families so it
+    reads as marked polishing lines instead of isotropic wavy texture.
     """
 
     if magnitude <= 0.0:
         return z
 
     rng = np.random.default_rng(seed)
-    rows, cols = z.shape
     yy, xx = np.indices(z.shape, dtype=float)
-    
-    result = np.asarray(z, dtype=float).copy()
-    
-    for _ in range(num_ripples):
-        # Random frequency (mid-range)
-        freq = rng.uniform(0.05, 0.2)
-        # Random angle
-        angle = rng.uniform(0, np.pi)
-        phase = rng.uniform(0, 2 * np.pi)
-        
-        kx = freq * np.cos(angle)
-        ky = freq * np.sin(angle)
-        
-        wave = np.sin(2 * np.pi * (kx * xx + ky * yy) + phase)
-        # Each sine has std = 1/sqrt(2). Sum of N has std = sqrt(N/2).
-        # We want total std = magnitude.
-        result += (magnitude * np.sqrt(2.0 / num_ripples)) * wave
-        
-    return result
+    stripe_field = np.zeros_like(z, dtype=float)
+
+    for axis_coords in (xx, yy):
+        axis_field = np.zeros_like(z, dtype=float)
+        for _ in range(num_ripples):
+            freq = rng.uniform(0.06, 0.18)
+            phase = rng.uniform(0.0, 2.0 * np.pi)
+            harmonic_weight = rng.uniform(0.15, 0.35)
+            base_wave = np.sin(2.0 * np.pi * freq * axis_coords + phase)
+            harmonic = np.sin(4.0 * np.pi * freq * axis_coords + 0.5 * phase)
+            axis_field += base_wave + harmonic_weight * harmonic
+
+        axis_field -= float(np.mean(axis_field))
+        axis_std = float(np.std(axis_field))
+        if axis_std > 0.0:
+            axis_field /= axis_std
+        stripe_field += axis_field
+
+    stripe_field -= float(np.mean(stripe_field))
+    stripe_std = float(np.std(stripe_field))
+    if stripe_std == 0.0:
+        return np.asarray(z, dtype=float).copy()
+
+    return np.asarray(z, dtype=float) + (magnitude / stripe_std) * stripe_field
 
 
 def add_low_frequency_noise(

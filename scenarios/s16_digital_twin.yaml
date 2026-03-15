@@ -3,22 +3,33 @@ description: Jumeau numérique haute-fidélité (PSF, Déformation temporelle, R
 grid_shape: [64, 64]
 tile_shape: [32, 32]
 pixel_size: 1.0
-scan_offsets:
-  - [-10.5, -10.5]
-  - [10.5, -10.5]
-  - [-10.5, 10.5]
-  - [10.5, 10.5]
+pattern_type: annular
+overlap_fraction: 0.25
+annular_rings: 2
 baseline_name: mean
 seed: 16
+gaussian_noise_std: 0.05
+outlier_fraction: 0.001
+reference_bias: 0.01
+retrace_error: 0.01
 metadata:
   truth_basis: zernike
-  truth_coefficients: [0.0, 0.0, 0.0, 0.2] # Convex signal
-  optical_psf_sigma: 0.8 # Optical smoothing
-  surface_bending_drift: 0.05 # Piece deforms over time
+  truth_coefficients: [0.0, 0.0, 0.0, 0.2, 0.3,-0.4, 0.1, -0.2] # Convex signal
+  optical_psf_sigma: 0.6 # Optical smoothing
+  surface_drift_coefficients: [0.0, 0.0, 0.0, 0.015, -0.01, 0.008] # Slow thermal deformation over the scan
   detector_pupil: circular
-  detector_edge_roll_off: 3.0 # Soft boundaries
-  mid_spatial_ripple_std: 0.02 # Polishing marks
+  detector_radius_fraction: 0.46
+  detector_edge_roll_off: 2.0 # Soft boundaries
+  mid_spatial_ripple_std: 0.1 # Polishing marks
   low_frequency_noise_std: 0.03
-  realized_pose_drift_std: 0.05
+  realized_pose_bias_xy: [0.08, -0.05]
+  realized_pose_drift_std: 0.03
+  realized_pose_error_std: 0.015
+  geometric_retrace_error: 0.12
+  slope_retrace_error: 0.01
+  drift_x: 0.01
+  drift_y: -0.008
+  drift_r2: 0.012
+  reference_bias_drift_step: 0.002
   interpolation_order: 3 # Bicubic
   ignore_piston: true

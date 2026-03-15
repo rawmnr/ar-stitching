@@ -5,7 +5,7 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 from stitching.editable.baseline import baseline_integer_unshift_mean
 from stitching.harness.run_eval import _with_verified_observed_support
 from stitching.trusted.eval.metrics import build_eval_report
-from stitching.trusted.scan.transforms import placement_slices
+from stitching.trusted.scan.transforms import extract_tile, placement_slices
 from stitching.trusted.simulator.identity import simulate_identity_observations
 from stitching.trusted.validation import validate_surface_alignment
 
@@ -240,6 +240,38 @@ def test_fractional_scan_offset_is_supported() -> None:
 
     _, observations = simulate_identity_observations(config)
     assert len(observations) == 1
+
+
+def test_extract_tile_subpixel_sampling_preserves_finite_values_inside_circular_truth() -> None:
+    config = ScenarioConfig(
+        scenario_id="subpixel_circular_truth",
+        description="subpixel circular truth",
+        grid_shape=(33, 33),
+        tile_shape=(17, 17),
+        pixel_size=1.0,
+        scan_offsets=((0.5, -0.5),),
+        seed=0,
+        metadata={
+            "truth_basis": "zernike",
+            "truth_coefficients": [0.0, 0.0, 0.0, 0.2, -0.1, 0.05],
+            "interpolation_order": 3,
+        },
+    )
+    truth, observations = simulate_identity_observations(config)
+    observation = observations[0]
+
+    local_truth_z, local_truth_mask = extract_tile(
+        truth.z,
+        truth.valid_mask,
+        observation.tile_shape,
+        observation.center_xy,
+        rotation_deg=observation.rotation_deg,
+        interpolation_order=3,
+    )
+
+    assert observation.valid_mask.sum() > 0
+    assert np.isfinite(observation.z[observation.valid_mask]).all()
+    assert np.isfinite(local_truth_z[local_truth_mask]).all()
 
 
 def test_validation_tolerates_tiny_roundoff_outside_mask() -> None:
