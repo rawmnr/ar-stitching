@@ -11,9 +11,12 @@ from stitching.trusted.instrument.bias import apply_reference_bias, reference_bi
 from stitching.trusted.noise.models import (
     add_gaussian_noise,
     add_low_frequency_noise,
+    add_mid_spatial_ripples,
     add_outliers,
+    apply_edge_degradation,
     apply_global_drift,
     apply_nuisance_terms,
+    apply_optical_psf,
     apply_retrace_error,
 )
 from stitching.trusted.scan.transforms import extract_tile
@@ -71,17 +74,6 @@ def _realized_pose_error(center_xy: tuple[float, float], config: ScenarioConfig,
     return cx, cy
 
 
-def _apply_discrete_rotation(values: np.ndarray, angle_deg: float) -> np.ndarray:
-    """Apply exact quarter-turn rotations without interpolation."""
-
-    normalized = float(angle_deg) % 360.0
-    quarter_turns = normalized / 90.0
-    rounded = int(round(quarter_turns))
-    if not np.isclose(quarter_turns, rounded):
-        raise ValueError("Trusted simulator only supports rotations in multiples of 90 degrees.")
-    return np.rot90(values, k=rounded)
-
-
 def _scenario_nuisance_terms(config: ScenarioConfig, index: int) -> dict[str, float]:
     """Return explicit nuisance terms for one observation.
 
@@ -127,22 +119,69 @@ def simulate_identity_observations(
     observations: list[SubApertureObservation] = []
     tile_shape = config.effective_tile_shape
 
+    # Pre-filter truth with optical PSF if requested (Fill factor / Optical smoothing)
+    psf_sigma = float(config.metadata.get("optical_psf_sigma", 0.0))
+    effective_truth_z = apply_optical_psf(truth.z, psf_sigma) if psf_sigma > 0.0 else truth.z
+
     for index, offset in enumerate(config.scan_offsets):
         rotation_deg = float(config.rotation_deg[min(index, len(config.rotation_deg) - 1)])
         center_xy = _tile_center(config.grid_shape, offset)
         realized_center_xy = _realized_pose_error(center_xy, config, index)
 
-        z, valid_mask = extract_tile(truth.z, truth.valid_mask, tile_shape, realized_center_xy)
+        # Time-varying Surface Deformation (Bending drift)
+        # We perturb the truth values during extraction for this specific observation
+        deform_mag = float(config.metadata.get("surface_bending_drift", 0.0))
+        if deform_mag != 0.0:
+            # Simple focus drift over time
+            yy, xx = np.indices(config.grid_shape, dtype=float)
+            ry = 2.0 * (yy - (config.grid_shape[0]-1)/2.0) / (config.grid_shape[0]-1)
+            rx = 2.0 * (xx - (config.grid_shape[1]-1)/2.0) / (config.grid_shape[1]-1)
+            r2 = rx**2 + ry**2
+            # Bending increases with index
+            deformation = deform_mag * (index / max(len(config.scan_offsets)-1, 1)) * r2
+            current_truth_z = effective_truth_z + deformation
+        else:
+            current_truth_z = effective_truth_z
 
-        # 1. Apply Detector Pupil Mask (Instrument constraint)
+        # Geometric Retrace Distortion
+        geom_retrace_mag = float(config.metadata.get("geometric_retrace_error", 0.0))
+        perturbation = None
+        if geom_retrace_mag != 0.0:
+            yy, xx = np.indices(tile_shape, dtype=float)
+            ry = 2.0 * (yy - (tile_shape[0]-1)/2.0) / (tile_shape[0]-1)
+            rx = 2.0 * (xx - (tile_shape[1]-1)/2.0) / (tile_shape[1]-1)
+            perturbation = np.array([geom_retrace_mag * ry, geom_retrace_mag * rx])
+
+        # Extract
+        interp_order = int(config.metadata.get("interpolation_order", 3))
+        z, valid_mask = extract_tile(
+            current_truth_z, 
+            truth.valid_mask, 
+            tile_shape, 
+            realized_center_xy, 
+            rotation_deg=rotation_deg,
+            interpolation_order=interp_order,
+            coordinate_perturbation_xy=perturbation
+        )
+
+        # 1. Apply Detector Pupil Mask & Edge Roll-off
         if config.metadata.get("detector_pupil") == "circular":
             from stitching.trusted.surface.footprint import circular_pupil_mask
             radius_frac = float(config.metadata.get("detector_radius_fraction", 0.45))
             detector_mask = circular_pupil_mask(tile_shape, radius_fraction=radius_frac)
             valid_mask = valid_mask & detector_mask
-            z = np.where(valid_mask, z, 0.0)
+            
+            # Edge roll-off (vignetting/SNR drop at boundaries)
+            roll_off = float(config.metadata.get("detector_edge_roll_off", 0.0))
+            if roll_off > 0.0:
+                z, _ = apply_edge_degradation(z, valid_mask, roll_off_width=roll_off, seed=config.seed + index + 40_000)
 
-        # 2. Add Low-Frequency Noise (Z1-Z15 Fringe)
+        # 2. Add Mid-Spatial Ripples (Polishing marks)
+        ripple_mag = float(config.metadata.get("mid_spatial_ripple_std", 0.0))
+        if ripple_mag > 0.0:
+            z = add_mid_spatial_ripples(z, ripple_mag, seed=config.seed + index + 50_000)
+
+        # 3. Add Low-Frequency Noise (Z1-Z15 Fringe)
         lf_magnitude = float(config.metadata.get("low_frequency_noise_std", 0.0))
         if lf_magnitude > 0.0:
             z = add_low_frequency_noise(z, lf_magnitude, seed=config.seed + index + 30_000)
@@ -163,8 +202,6 @@ def simulate_identity_observations(
         z = apply_retrace_error(z, config.retrace_error, slope_magnitude=slope_retrace)
         
         z = np.where(valid_mask, z, 0.0)
-        z = _apply_discrete_rotation(z, rotation_deg)
-        valid_mask = _apply_discrete_rotation(valid_mask, rotation_deg).astype(bool)
 
         observations.append(
             SubApertureObservation(

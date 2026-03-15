@@ -9,6 +9,54 @@ from stitching.trusted.bases.zernike import generate_zernike_surface
 OUTLIER_SCALE_EPS = 1e-12
 
 
+from scipy.ndimage import gaussian_filter, distance_transform_edt
+
+
+def apply_optical_psf(z: np.ndarray, sigma_pixels: float) -> np.ndarray:
+    """Apply a Gaussian blur to simulate optical PSF and pixel integration.
+
+    Eliminates mathematical aliasing by smoothing high-frequencies before sampling.
+    """
+
+    if sigma_pixels <= 0.0:
+        return z
+    return gaussian_filter(z, sigma=sigma_pixels)
+
+
+def apply_edge_degradation(
+    z: np.ndarray,
+    mask: np.ndarray,
+    roll_off_width: float,
+    noise_boost: float = 0.0,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Apply signal attenuation and noise increase near the pupil edges.
+
+    Simulates diffraction/vignetting/roll-off at the boundary.
+    Returns (degraded_z, softened_mask_or_weights).
+    """
+
+    if roll_off_width <= 0.0:
+        return z, mask
+
+    # Compute distance to edge (inside the mask)
+    dist = distance_transform_edt(mask)
+    
+    # Sigmoid-like attenuation (0 at edge, 1 at center)
+    weights = np.clip(dist / roll_off_width, 0, 1)
+    weights = 0.5 * (1 + np.cos(np.pi * (1 - weights))) # Smooth cosine bell
+
+    result = z * weights
+    
+    # Optionally boost noise at the edges (lower SNR)
+    if noise_boost > 0.0:
+        rng = np.random.default_rng(seed)
+        edge_noise = rng.normal(0.0, noise_boost, size=z.shape)
+        result += edge_noise * (1 - weights)
+
+    return result, mask
+
+
 def apply_global_drift(
     z: np.ndarray,
     center_xy: tuple[float, float],
@@ -121,6 +169,44 @@ def add_outliers(
     flat_indices = _sample_flat_indices(candidate_mask, count, rng)
     signs = rng.choice(np.array([-1.0, 1.0]), size=count)
     result.flat[flat_indices] += outlier_magnitude_scale(result, candidate_mask) * float(magnitude) * signs
+    return result
+
+
+def add_mid_spatial_ripples(
+    z: np.ndarray,
+    magnitude: float,
+    seed: int,
+    num_ripples: int = 5,
+) -> np.ndarray:
+    """Add periodic mid-spatial frequency ripples (polishing marks).
+
+    Sum of 2D sine waves with random orientations and frequencies.
+    """
+
+    if magnitude <= 0.0:
+        return z
+
+    rng = np.random.default_rng(seed)
+    rows, cols = z.shape
+    yy, xx = np.indices(z.shape, dtype=float)
+    
+    result = np.asarray(z, dtype=float).copy()
+    
+    for _ in range(num_ripples):
+        # Random frequency (mid-range)
+        freq = rng.uniform(0.05, 0.2)
+        # Random angle
+        angle = rng.uniform(0, np.pi)
+        phase = rng.uniform(0, 2 * np.pi)
+        
+        kx = freq * np.cos(angle)
+        ky = freq * np.sin(angle)
+        
+        wave = np.sin(2 * np.pi * (kx * xx + ky * yy) + phase)
+        # Each sine has std = 1/sqrt(2). Sum of N has std = sqrt(N/2).
+        # We want total std = magnitude.
+        result += (magnitude * np.sqrt(2.0 / num_ripples)) * wave
+        
     return result
 
 

@@ -52,45 +52,86 @@ def extract_tile(
     global_mask: np.ndarray,
     tile_shape: tuple[int, int],
     center_xy: tuple[float, float],
+    rotation_deg: float = 0.0,
+    interpolation_order: int = 1,
+    coordinate_perturbation_xy: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Extract a detector tile from a global surface with sub-pixel interpolation.
+    """Extract a detector tile with arbitrary rotation and higher-order interpolation.
 
-    If `center_xy` aligns perfectly with integer pixel placement, exact slicing
-    is used to avoid interpolation artifacts. Otherwise, bilinear interpolation
-    is used for both the surface values and the mask (thresholded at 0.5).
+    Args:
+        global_surface: Global height map.
+        global_mask: Global valid mask.
+        tile_shape: (rows, cols) of the detector.
+        center_xy: (x, y) center in global pixels.
+        rotation_deg: Clockwise rotation in degrees.
+        interpolation_order: 1 for bilinear, 3 for bicubic.
+        coordinate_perturbation_xy: (2, rows, cols) array of (dx, dy) sampling errors.
+
+    If rotation is 0 and center is integer-aligned, exact slicing is used.
+    Otherwise, map_coordinates is used for high-fidelity sampling.
     """
 
-    try:
-        global_y, global_x, local_y, local_x = placement_slices(global_surface.shape, tile_shape, center_xy)
-        z = np.zeros(tile_shape, dtype=float)
-        valid_mask = np.zeros(tile_shape, dtype=bool)
-        z[local_y, local_x] = global_surface[global_y, global_x]
-        valid_mask[local_y, local_x] = global_mask[global_y, global_x]
-        return z, valid_mask
-    except ValueError:
-        return _extract_tile_interpolated(global_surface, global_mask, tile_shape, center_xy)
+    # Fast path for axis-aligned integer placement
+    if math.isclose(rotation_deg % 360, 0, abs_tol=1e-9):
+        try:
+            global_y, global_x, local_y, local_x = placement_slices(global_surface.shape, tile_shape, center_xy)
+            z = np.zeros(tile_shape, dtype=float)
+            valid_mask = np.zeros(tile_shape, dtype=bool)
+            z[local_y, local_x] = global_surface[global_y, global_x]
+            valid_mask[local_y, local_x] = global_mask[global_y, global_x]
+            return z, valid_mask
+        except ValueError:
+            pass # Fall through to interpolation
+
+    return _extract_tile_sampled(
+        global_surface,
+        global_mask,
+        tile_shape,
+        center_xy,
+        rotation_deg,
+        interpolation_order,
+        coordinate_perturbation_xy
+    )
 
 
-def _extract_tile_interpolated(
+def _extract_tile_sampled(
     global_surface: np.ndarray,
     global_mask: np.ndarray,
     tile_shape: tuple[int, int],
     center_xy: tuple[float, float],
+    rotation_deg: float,
+    order: int,
+    perturbation: np.ndarray | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Perform bilinear interpolation for sub-pixel tile extraction."""
+    """Perform coordinate-mapped sampling for rotation and sub-pixel placement."""
 
     rows, cols = tile_shape
-    origin_x = center_xy[0] - (cols - 1) / 2.0
-    origin_y = center_xy[1] - (rows - 1) / 2.0
+    angle_rad = math.radians(rotation_deg)
+    cos_a = math.cos(angle_rad)
+    sin_a = math.sin(angle_rad)
 
-    yy, xx = np.indices(tile_shape, dtype=float)
-    coords = np.array([yy.ravel() + origin_y, xx.ravel() + origin_x])
+    # Local coordinates relative to tile center
+    yy_local, xx_local = np.indices(tile_shape, dtype=float)
+    yy_local -= (rows - 1) / 2.0
+    xx_local -= (cols - 1) / 2.0
 
-    # Map surface values (order=1 for bilinear)
-    z = map_coordinates(global_surface, coords, order=1, mode="constant", cval=0.0)
+    # Rotate and translate to global frame
+    # (Global Y is index 0, Global X is index 1)
+    xx_global = center_xy[0] + xx_local * cos_a - yy_local * sin_a
+    yy_global = center_xy[1] + xx_local * sin_a + yy_local * cos_a
+
+    coords = np.array([yy_global.ravel(), xx_global.ravel()])
+
+    # Apply geometric retrace distortion if provided
+    if perturbation is not None:
+        coords[0] += perturbation[0].ravel() # dy
+        coords[1] += perturbation[1].ravel() # dx
+
+    # Map surface (order 1=bilinear, 3=bicubic)
+    z = map_coordinates(global_surface, coords, order=order, mode="constant", cval=0.0)
     z = z.reshape(tile_shape)
 
-    # Map mask (order=1 and thresholding at 0.5 effectively keeps mask tight)
+    # Map mask (always bilinear/nearest-like via threshold for stability)
     mask_f = map_coordinates(global_mask.astype(float), coords, order=1, mode="constant", cval=0.0)
     valid_mask = mask_f.reshape(tile_shape) >= 0.5
 

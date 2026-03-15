@@ -12,13 +12,18 @@ Current phase: **Simulation Bench & Evaluation Foundation**.
 
 ## Key Features (Trusted Stack)
 
-- **Sub-pixel Realism**: Support for non-integer robot offsets via bilinear interpolation.
-- **Instrument Modeling**: Choice of square or circular detector pupils.
+- **Digital Twin Realism**:
+    - **Optical PSF**: Gaussian blurring to simulate optical smoothing and pixel fill factor.
+    - **Surface Non-stationarity**: Bending drift (focus/flexion) of the piece over time.
+    - **Mid-Spatial Ripples**: Periodic perturbations simulating polishing marks or machining traces.
+    - **Edge Roll-off**: Signal attenuation and noise boost at pupil boundaries.
+- **Sub-pixel & Rotation**: High-fidelity sampling with **Bicubic interpolation** and arbitrary rotation angles.
+- **Instrument Modeling**: Choice of square or circular detector pupils with soft edges.
 - **Advanced Nuisance Models**:
     - **Pose Error**: Systematic bias, correlated drift (random walk), and independent jitter.
     - **Structured Bias**: Tip, tilt, and focus (Z1-Z4) as per-detector nuisances.
-    - **Low-Frequency Noise**: Zernike-based (Fringe Z1-Z15) perturbations with spectral power decay.
-    - **Complex Retrace**: Local slope-dependent distortion (gradient-based).
+    - **Low-Frequency Noise**: Zernike-based (Fringe Z1-Z15) spectral perturbations.
+    - **Complex Retrace**: Geometric field distortion (coordinate-based).
 - **Mismatch Diagnostics**: Per-pixel standard deviation maps and statistics (mean, median, p95) to assess internal consistency without ground truth.
 - **Scenario-Driven**: 15+ canonical YAML scenarios covering noise, outliers, drift, and realistic metrology conditions.
 

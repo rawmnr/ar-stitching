@@ -163,7 +163,7 @@ def test_quarter_turn_rotation_is_applied_to_observation_pixels() -> None:
     _, unrotated_obs = simulate_identity_observations(unrotated_config)
 
     assert rotated_obs[0].rotation_deg == 90.0
-    assert np.array_equal(rotated_obs[0].z, np.rot90(unrotated_obs[0].z, k=1))
+    assert np.allclose(rotated_obs[0].z, np.rot90(unrotated_obs[0].z, k=1), atol=1e-12)
     assert np.array_equal(rotated_obs[0].valid_mask, np.rot90(unrotated_obs[0].valid_mask, k=1))
 
 
