@@ -20,6 +20,11 @@ backends:
     model: gpt-oss-prod
     timeout_sec: 240
 
+  opencode-devstral:
+    provider: llama-swap
+    model: devstral-standard
+    timeout_sec: 240
+
   opencode_local:
     provider: llama-swap
     model: qwen3-coder

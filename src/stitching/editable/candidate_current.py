@@ -85,7 +85,7 @@ class CandidateStitcher:
                 observed_support_mask=zero_mask,
                 metadata=self._metadata(observation_list, tile_centers, (), (), ()),
             )
-        # Build GLS system for piston+tip/tilt
+        # Build GLS system for piston+tip/tilt with Tikhonov regularisation
         x_global = global_indices % global_shape[1]
         y_global = global_indices // global_shape[1]
         diff = np.diff(global_indices)
@@ -148,7 +148,18 @@ class CandidateStitcher:
             col_idx = np.concatenate(col_indices)
             data_arr = np.concatenate(data)
             rhs_arr = np.concatenate(rhs)
-            system = sparse.coo_matrix((data_arr, (row_idx, col_idx)), shape=(row_offset, len(observation_list) * 3))
+            # Add Tikhonov regularisation to stabilize the system
+# lambda weight
+lambda_ = 1e-6
+reg_rows = np.arange(row_offset, row_offset + 3 * len(observation_list))
+reg_cols = np.arange(3 * len(observation_list))
+reg_data = np.full(3 * len(observation_list), lambda_, dtype=float)
+# Combine with original system
+row_idx = np.concatenate([row_idx, reg_rows])
+col_idx = np.concatenate([col_idx, reg_cols])
+data_arr = np.concatenate([data_arr, reg_data])
+# Construct the augmented sparse matrix
+system = sparse.coo_matrix((data_arr, (row_idx, col_idx)), shape=(row_offset + 3 * len(observation_list), len(observation_list) * 3))
             sol = lsqr(system, rhs_arr)[0]
             sol = sol.reshape((len(observation_list), 3))
             piston_shifts = sol[:, 0]

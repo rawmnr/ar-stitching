@@ -36,7 +36,7 @@ class OpenCodeCliBackend(AgentBackend):
         self,
         repo_root: Path,
         provider: str = "llama-swap",
-        model: str = "gpt-oss-prod",
+        model: str = "devstral-standard",
         agentic_timeout_sec: float = 240.0,  # Per-attempt timeout
         **kwargs,
     ) -> None:
