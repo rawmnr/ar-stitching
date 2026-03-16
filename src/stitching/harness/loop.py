@@ -118,7 +118,7 @@ class AutoresearchLoop:
                     try:
                         best_path = self.repo_root / "experiments" / "accepted" / f"{self.experiment_id}_best.py"
                         best_path.parent.mkdir(parents=True, exist_ok=True)
-                        best_path.write_text(result.diff_patch or "", encoding="utf-8") # Wait, diff_patch is not full source
+                        
                         # Re-read full source from disk (it was already committed/applied)
                         full_source = candidate_path.read_text(encoding="utf-8")
                         best_path.write_text(full_source, encoding="utf-8")
