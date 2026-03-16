@@ -26,6 +26,8 @@ from stitching.harness.protocols import (
     RunVerdict,
 )
 
+from stitching.harness.visualize_iteration import plot_iteration_report
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +78,23 @@ class AutoresearchLoop:
             try:
                 result = self._run_iteration(iteration)
                 self.ledger.record(result)
+                
+                # Save iteration visualization
+                if result.eval_reports:
+                    try:
+                        report_dir = self.repo_root / "experiments" / "reports" / self.experiment_id
+                        report_dir.mkdir(parents=True, exist_ok=True)
+                        report_path = report_dir / f"iter_{iteration:04d}.png"
+                        plot_iteration_report(
+                            result.eval_reports,
+                            report_path,
+                            iteration,
+                            self.backend.name
+                        )
+                        logger.info("Iteration report saved to %s", report_path)
+                    except Exception as ve:
+                        logger.error("Failed to save iteration report: %s", ve)
+
                 logger.info(
                     "Verdict: %s | RMS: %.6f | Elapsed: %.1fs",
                     result.verdict.value,
@@ -220,23 +239,25 @@ class AutoresearchLoop:
             self.git.stage_and_commit([self.candidate_rel_path], commit_msg)
             verdict = RunVerdict.ACCEPTED
             final_metrics = new_metrics
+            final_reports = reports
         else:
             self._restore_candidate(candidate_path, backup_source)
             verdict = RunVerdict.REJECTED_REGRESSION
             final_metrics = current_metrics
+            final_reports = reports
 
         return RunResult(
             manifest=manifest,
             verdict=verdict,
             metrics=final_metrics,
-            eval_reports=reports if improved else (),
+            eval_reports=final_reports,
             hypothesis=proposal.hypothesis,
             diff_patch=diff_patch,
             elapsed_sec=budget_tracker.elapsed,
             notes=tuple(
                 f"{r.scenario_id}: "
                 f"rms={r.signal_metrics['rms_on_valid_intersection']:.6f}"
-                for r in (reports if improved else ())
+                for r in final_reports
             ),
         )
 
