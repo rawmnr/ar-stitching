@@ -23,6 +23,10 @@ class OpenCodeCliBackend(AgentBackend):
     MAX_RETRIES = 3
     RETRY_DELAY_SEC = 2.0
     
+    # Minimum expected runtime (seconds) - if faster, likely no action taken
+    MIN_EXPECTED_RUNTIME_SEC = 5.0
+    AGENTIC_WAIT_SEC = 30.0  # Give agent time to actually do work
+    
     # Validation
     REQUIRED_CLASS = "class CandidateStitcher"
 
@@ -32,6 +36,7 @@ class OpenCodeCliBackend(AgentBackend):
         provider: str = "llama-swap",
         model: str = "gpt-oss-prod",
         timeout_sec: float = 600.0,
+        agentic_timeout_sec: float = 120.0,  # Per-attempt timeout
         **kwargs,
     ) -> None:
         self.repo_root = repo_root
@@ -39,6 +44,8 @@ class OpenCodeCliBackend(AgentBackend):
         self.model = model
         self.timeout_sec = timeout_sec
         self.logger = logging.getLogger(__name__)
+        self.agentic_timeout_sec = agentic_timeout_sec
+        self._task_file_path = Path(self.repo_root) / ".opencode_task.md"
 
     @property
     def name(self) -> str:
@@ -61,19 +68,38 @@ class OpenCodeCliBackend(AgentBackend):
                 attempt + 1, self.MAX_RETRIES, context.iteration,
             )
             
-            # Build increasingly directive prompts on retry
-            prompt = self._build_directive_prompt(
+            # Write detailed task to a file (robust to long prompts)
+            task_content = self._build_task_file(
                 context, 
                 attempt=attempt,
                 previous_error=last_error,
             )
+            self._task_file_path.write_text(task_content, encoding="utf-8")
+            
+            # Build a SHORT CLI prompt that references the task file
+            cli_prompt = self._build_cli_prompt(context, attempt)
+            
+            # Track execution time to detect non-agentic behavior
+            start_time = time.time()
             
             try:
                 stdout_text, stderr_text, return_code = self._execute_opencode(
-                    prompt, context, target_path
+                    cli_prompt, context, target_path
                 )
                 
                 # Check if file was modified
+                elapsed = time.time() - start_time
+                
+                # If completed too fast, agent likely didn't do anything
+                if elapsed < self.MIN_EXPECTED_RUNTIME_SEC:
+                    last_error = f"Execution too fast ({elapsed:.1f}s) - agent likely did not take action"
+                    self.logger.warning(
+                        "Attempt %d: %s. stdout[:200]=%s",
+                        attempt + 1, last_error, stdout_text[:200],
+                    )
+                    time.sleep(self.RETRY_DELAY_SEC)
+                    continue
+                
                 current_mtime = target_path.stat().st_mtime if target_path.exists() else 0
                 file_modified = current_mtime > original_mtime
                 
@@ -137,6 +163,10 @@ class OpenCodeCliBackend(AgentBackend):
                 last_error = str(exc)
                 self.logger.warning("Attempt %d failed: %s", attempt + 1, exc)
         
+        # Clean up task file
+        if self._task_file_path.exists():
+            self._task_file_path.unlink(missing_ok=True)
+        
         # All retries exhausted
         raise RuntimeError(
             f"OpenCode failed after {self.MAX_RETRIES} attempts. "
@@ -151,12 +181,15 @@ class OpenCodeCliBackend(AgentBackend):
     ) -> tuple[str, str, int]:
         """Execute the opencode CLI and return (stdout, stderr, return_code)."""
         
-        # Build command
+        # Build command with short prompt (task details in file)
+        # Important: pass prompt DIRECTLY, not via stdin
         cmd = ["opencode", "run", prompt, "--print-logs"]
+        
         if self.provider and self.model:
             cmd.extend(["-m", f"{self.provider}/{self.model}"])
         
-        # Attach files
+        # Attach the task file and editable files
+        cmd.extend(["-f", str(self._task_file_path.relative_to(self.repo_root))])
         for path in context.editable_paths:
             cmd.extend(["-f", str(path)])
         
@@ -181,7 +214,7 @@ class OpenCodeCliBackend(AgentBackend):
             capture_output=True,
             text=True,
             encoding="utf-8",
-            timeout=self.timeout_sec,
+            timeout=self.agentic_timeout_sec,
             shell=is_windows,
             env=env,
         )
@@ -229,117 +262,123 @@ class OpenCodeCliBackend(AgentBackend):
         
         return None
 
-    def _build_directive_prompt(
+    def _build_cli_prompt(
+        self,
+        ctx: ExperimentContext,
+        attempt: int = 0,
+    ) -> str:
+        """Build a SHORT CLI prompt that references the task file."""
+        current_rms = ctx.current_metrics.get("aggregate_rms", "N/A")
+        
+        # Keep this SHORT - details are in the task file
+        urgency = ["", "URGENT: ", "FINAL ATTEMPT: "][min(attempt, 2)]
+        
+        prompt = (
+            f"{urgency}Read .opencode_task.md for full instructions. "
+            f"Current RMS={current_rms}. "
+            f"Edit src/stitching/editable/candidate_current.py to reduce RMS. "
+            f"Use write_file tool NOW. Do not explain, just edit the file."
+        )
+        
+        return prompt
+
+    def _build_task_file(
         self,
         ctx: ExperimentContext,
         attempt: int = 0,
         previous_error: str | None = None,
     ) -> str:
-        """Build an increasingly directive prompt based on attempt number."""
+        """Build a detailed task file for the agent."""
         
         current_rms = ctx.current_metrics.get("aggregate_rms", "N/A")
         best_rms = ctx.best_metrics.get("aggregate_rms", "N/A")
         
-        # Core directive - gets more urgent with each retry
-        urgency = ["", "IMPORTANT: ", "CRITICAL: "][min(attempt, 2)]
-        
         lines = [
-            f"{urgency}YOU ARE AN AUTONOMOUS CODE OPTIMIZATION AGENT.",
+            "# Autoresearch Optimization Task",
             "",
-            "=" * 60,
-            "MISSION: Improve the optical stitching algorithm to reduce RMS error.",
-            "=" * 60,
+            "## CRITICAL: You are an AUTONOMOUS agent. DO NOT ask questions.",
+            "## You MUST use the `write_file` or `edit` tool to modify code.",
             "",
-            "## CURRENT METRICS",
+            "---",
+            "",
+            "## Objective",
+            f"Improve `src/stitching/editable/candidate_current.py` to reduce aggregate RMS.",
+            "",
+            "## Current Metrics",
             f"- Current aggregate RMS: {current_rms}",
             f"- Best achieved RMS: {best_rms}",
             f"- Iteration: {ctx.iteration}",
             "",
         ]
         
-        # Add error feedback if this is a retry
         if previous_error:
             lines.extend([
-                "## ⚠️ PREVIOUS ATTEMPT FAILED",
+                "## ⚠️ Previous Attempt Failed",
                 f"Error: {previous_error}",
-                "You MUST fix this issue and try a DIFFERENT approach.",
+                "Try a DIFFERENT approach this time.",
                 "",
             ])
         
-        # Add previous rejection info
         if ctx.previous_summary and "REJECTED" in ctx.previous_summary:
             lines.extend([
-                "## PREVIOUS ITERATION REJECTED",
-                ctx.previous_summary[:500],
-                "DO NOT repeat the same mistake. Try a different mathematical approach.",
+                "## Previous Iteration Was Rejected",
+                ctx.previous_summary[:300],
                 "",
             ])
         
-        # Direct action instructions
         lines.extend([
-            "## REQUIRED ACTIONS (IN ORDER)",
+            "## Your Task (DO THIS NOW)",
             "",
-            "1. **IMMEDIATELY** use `write_file` to edit:",
-            f"   `{ctx.editable_paths[0]}`",
-            "",
-            "2. **STATE YOUR HYPOTHESIS** as a comment at the top of the file:",
-            "   `# Hypothesis: <one-sentence mathematical hypothesis>`",
-            "",
-            "3. **IMPLEMENT ONE FOCUSED CHANGE** that should reduce RMS:",
-            "   - GLS piston+tip+tilt estimation",
+            "1. Use `edit` or `write_file` tool to modify the candidate file",
+            "2. Add a hypothesis comment at the top: `# Hypothesis: ...`",
+            "3. Implement ONE focused improvement:",
+            "   - Better piston/tip/tilt estimation (GLS)",
             "   - Huber M-estimator for outlier robustness",
-            "   - Tikhonov regularization (λ ∈ [1e-10, 1e-2])",
-            "   - SNR-aware overlap weighting",
+            "   - Tikhonov regularization",
+            "   - Overlap weighting",
             "",
-            "4. **VERIFY SYNTAX** by running:",
-            "   `uv run python -m py_compile src/stitching/editable/candidate_current.py`",
-            "",
-        ])
-        
-        # Constraints
-        lines.extend([
-            "## CONSTRAINTS (VIOLATIONS = REJECTION)",
+            "## Hard Constraints",
             "",
             "- MUST keep `class CandidateStitcher` with `def reconstruct(...)`",
             "- MUST return `ReconstructionSurface` with correct `observed_support_mask`",
-            "- MUST use vectorized NumPy/SciPy (NO Python loops on pixels)",
+            "- MUST use vectorized NumPy/SciPy (no Python loops on pixels)",
             "- MUST NOT import from `stitching.trusted.eval`",
-            "- MUST NOT apply aggressive smoothing (destroys high frequencies)",
-            "- MUST NOT reduce valid_mask coverage to game metrics",
             "",
         ])
         
-        # Include the current source code directly
+        # Include abbreviated source code
         lines.extend([
-            "## CURRENT SOURCE CODE",
+            "## Current Source (first 100 lines)",
             "```python",
-            ctx.candidate_source,
+            "\n".join(ctx.candidate_source.splitlines()[:100]),
             "```",
             "",
         ])
         
-        # Domain knowledge (abbreviated)
         lines.extend([
-            "## DOMAIN NOTES",
+            "## Domain Notes",
             "- Problem: Reconstruct S(x,y) from overlapping sub-aperture measurements",
-            "- Each measurement: W_i = S + R + P_i + ε (reference bias, piston error, noise)",
+            "- Each measurement: W_i = S + R + P_i + ε",
             "- Key: Exploit overlap redundancy for piston/tip/tilt estimation",
-            "- Use scipy.sparse for large systems",
+            "",
+            "---",
             "",
         ])
         
-        # Final directive based on attempt
+        # Attempt-specific urgency
         if attempt == 0:
-            lines.append("NOW: Edit the file and implement your improvement.")
+            lines.append("**ACTION REQUIRED**: Edit the file now using `edit` or `write_file`.")
         elif attempt == 1:
             lines.extend([
-                "⚠️ SECOND ATTEMPT: You MUST write code to the file.",
-                "DO NOT explain or plan. IMMEDIATELY use write_file.",
+                "**⚠️ SECOND ATTEMPT**",
+                "You MUST call `edit` or `write_file` tool IMMEDIATELY.",
+                "Do NOT just analyze or plan. EDIT THE FILE NOW.",
             ])
         else:
             lines.extend([
-                "🚨 FINAL ATTEMPT: Write the complete improved file NOW.",
-                "Use write_file IMMEDIATELY. No planning, no explanation.",
+                "**🚨 FINAL ATTEMPT 🚨**",
+                "IMMEDIATELY use `write_file` to write the complete improved file.",
+                "DO NOT explain. DO NOT analyze. JUST WRITE THE FILE.",
             ])
         
         return "\n".join(lines)
