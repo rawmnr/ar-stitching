@@ -30,5 +30,10 @@ backends:
     model: qwen3-coder
     timeout_sec: 180
 
+  opencode_qwen3:
+    provider: openrouter
+    model: qwen/qwen3.5-35b-a3b
+    timeout_sec: 240
+
 default_backend: codex
 fallback_backend: opencode_gpt_oss

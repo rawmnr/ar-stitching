@@ -11,6 +11,7 @@ import re
 import os
 import shutil
 import time
+import ast
 from pathlib import Path
 
 from stitching.harness.protocols import AgentBackend, ExperimentContext, PatchProposal
@@ -88,6 +89,13 @@ class OpenCodeCliBackend(AgentBackend):
                     cli_prompt, context
                 )
                 
+                # Check for opencode failure (crash/error)
+                if return_code != 0:
+                    last_error = f"OpenCode crashed with exit code {return_code}. stderr: {stderr_text[:500]}"
+                    logger.error("Attempt %d: %s", attempt + 1, last_error)
+                    time.sleep(self.RETRY_DELAY_SEC)
+                    continue
+
                 # Check if file was modified
                 elapsed = time.time() - start_time
                 
@@ -253,13 +261,23 @@ class OpenCodeCliBackend(AgentBackend):
         
         # Check syntax
         try:
-            compile(code, "<candidate>", "exec")
+            tree = ast.parse(code)
         except SyntaxError as exc:
             return f"Syntax error at line {exc.lineno}: {exc.msg}"
+        except Exception as exc:
+            return f"Parsing error: {exc}"
         
         # Check for common mistakes - slightly more specific to avoid false positives
         if "from stitching.trusted.eval.metrics import" in code:
             return "Forbidden import from stitching.trusted.eval.metrics (use contracts instead)"
+
+        # Check for undefined names (basic check)
+        # We only check for names that are likely to be used but forgotten
+        # Like np, sparse, lsqr, global_shape etc.
+        # This is a bit complex to do perfectly without full static analysis,
+        # but we can do a simple check for 'np.' if 'import numpy as np' is missing.
+        if "np." in code and "import numpy as np" not in code and "import numpy" not in code:
+            return "Missing 'import numpy as np'"
         
         return None
 
