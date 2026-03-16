@@ -32,7 +32,7 @@ backends:
 
   opencode_qwen3:
     provider: openrouter
-    model: qwen/qwen3.5-35b-a3b
+    model: qwen/qwen3-coder-30b-a3b-instruct
     timeout_sec: 240
 
 default_backend: codex
