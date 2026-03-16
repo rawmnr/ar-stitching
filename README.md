@@ -1,69 +1,81 @@
 # ar-stitching
 
-`ar-stitching` is a scientific Python repository for optical sub-aperture stitching autoresearch.
+`ar-stitching` is a scientific Python repository for optical sub‑aperture stitching autoresearch.
 
-Current phase: **Autoresearch Framework & Agent-Driven Optimization**.
+## Current Phase
+
+Current phase: **Autoresearch Framework & Agent‑Driven Optimization**.
+
+## Table of Contents
+
+- [Repository Overview](#repository-overview)
+- [Key Features](#key-features)
+- [Project Status](#project-status)
+- [Getting Started](#getting-started)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Repository Overview
 
-The project is structured around a **Trusted/Editable** boundary to ensure scientific integrity while allowing autonomous agents to evolve stitching algorithms.
+The project is structured around a **trusted/editable** boundary to ensure scientific integrity while allowing autonomous agents to evolve stitching algorithms.
 
-- `src/stitching/trusted/`: **The Scientific Reference**. Contains the simulation bench, sub-pixel transforms, nuisance models (drift, retrace, structured bias), and rigorous evaluation metrics.
-- `src/stitching/editable/`: **The Agent Playground**. Contains the algorithm "genome" (`candidate_current.py`) and archived successful candidates.
-- `src/stitching/harness/`: **The Engine**. Orchestrates the autoresearch loop, git-based versioning, resource budgeting, and performance ledger.
-- `src/stitching/agents/`: **The Backends**. Routes optimization requests to AI models (Codex, OpenCode/Anthropic) via structured protocols.
+- **Trusted** – `src/stitching/trusted/` – contains the scientific reference model (simulation bench, sub‑pixel transforms, drift models, evaluation metrics).
+- **Editable** – `src/stitching/editable/` – the “genome” (`candidate_current.py`) and archived successful candidates.
+- **Harness** – `src/stitching/harness/` – orchestrates the autoresearch loop, GitOps, resource budgeting, and performance ledger.
+- **Agents** – `src/stitching/agents/` – routes optimisation requests to AI back‑ends (Codex, OpenCode/Anthropic).
 
 ## Key Features
 
-### 1. Autoresearch Framework (New)
-- **Closed-Loop Optimization**: A full "Propose → Evaluate → Decide" cycle powered by `src/stitching/harness/loop.py`.
-- **GitOps Integration**: Isolated execution in temporary worktrees with automatic commits for accepted improvements and reverts for regressions.
-- **Scientific Ledger**: Append-only log of every iteration, including hypotheses, diffs, metrics, and aggregate results.
-- **Multi-Agent Support**: Interchangeable backends for OpenAI Codex and OpenCode (local or cloud models).
-- **Leaderboard**: Automated ranking of the best stitching candidates based on aggregate RMS error.
-
-### 2. High-Fidelity Simulation (Digital Twin)
-- **Metrology Realism**: 
-    - **Optical PSF**: Gaussian blurring for optical smoothing and pixel fill factor.
-    - **Surface Non-stationarity**: Multi-mode bending drift (Zernike Z4-Z8).
-    - **Mid-Spatial Ripples**: Periodic polishing marks fixed in the piece frame.
-    - **Edge Roll-off**: Signal attenuation and noise boost at pupil boundaries.
-- **Advanced Scanning**: Automated `grid` and `annular` scan plans with guaranteed coverage and sub-pixel registration.
-- **Instrument Modeling**: Support for square/circular pupils with **NaN-based** invalid area semantics.
-
-### 3. Evaluation & Diagnostics
-- **Rigorous Metrics**: RMS and MAE calculated strictly on valid intersections, geometry gates (0.99 IoU), and HF retention monitoring.
-- **Mismatch Analysis**: Per-pixel standard deviation maps to identify internal consistency errors and stitching artifacts.
-- **Automated Reporting**: 6-view PNG reports providing deep visual insight into reconstruction quality.
+1. **Autoresearch Framework (New)**
+   * **Closed‑Loop Optimization** – “Propose → Evaluate → Decide” cycle powered by `src/stitching/harness/loop.py`.
+   * **GitOps Integration** – isolated execution in temporary work‑trees with automatic commits for accepted improvements and reverts for regressions.
+   * **Scientific Ledger** – append‑only log of every iteration (hypotheses, diffs, metrics, aggregate results).
+   * **Multi‑Agent Support** – interchangeable back‑ends for OpenAI Codex and OpenCode (local or cloud models).
+   * **Leaderboard** – automated ranking of best stitching candidates based on aggregate RMS error.
+2. **High‑Fidelity Simulation (Digital Twin)**
+   * **Optical PSF** – Gaussian blurring for optical smoothing and pixel fill factor.
+   * **Surface Non‑Stationarity** – multi‑mode bending drift (Zernike Z4‑Z8).
+   * **Mid‑Spatial Ripples** – periodic polishing marks fixed in the piece frame.
+   * **Edge Roll‑off** – signal attenuation and noise boost at pupil boundaries.
+   * **Advanced Scanning** – automated `grid` and `annular` scan plans with guaranteed coverage and sub‑pixel registration.
+   * **Instrument Modeling** – support for square/circular pupils with NaN‑based invalid area semantics.
+3. **Evaluation & Diagnostics**
+   * **Rigorous Metrics** – RMS and MAE calculated strictly on valid intersections, geometry gates (IoU ≥ 0.99), and high‑frequency retention monitoring.
+   * **Mismatch Analysis** – per‑pixel standard deviation maps to identify internal consistency errors and stitching artifacts.
+   * **Automated Reporting** – 6‑view PNG reports providing deep visual insight into reconstruction quality.
 
 ## Project Status
 
-- [x] **Trusted Stack**: Complete high-fidelity simulator and evaluation engine.
-- [x] **Harness**: Fully operational Autoresearch loop with GitOps and Ledger.
-- [x] **Agents**: Integrated Codex and OpenCode backends with structured prompting.
-- [x] **Baseline**: Piston-corrected mean baseline established and ready for optimization.
-- [ ] **Phase 2**: Agent-driven evolution toward GLS (Global Least Squares) and Robust M-Estimators.
-- [ ] **Phase 3**: Self-calibration (CS/SC) for stationary reference bias removal.
+- [x] Trusted Stack – complete high‑fidelity simulator and evaluation engine.
+- [x] Harness – fully operational autoresearch loop with GitOps and Ledger.
+- [x] Agents – integrated Codex and OpenCode back‑ends with structured prompting.
+- [x] Baseline – piston‑corrected mean baseline established and ready for optimisation.
+- [ ] Phase 2 – agent‑driven evolution toward GLS (Global Least Squares) and Robust M‑Estimators.
+- [ ] Phase 3 – self‑calibration (CS/SC) for stationary reference bias removal.
 
 ## Getting Started
 
-### 1. Initial Evaluation
-Run a baseline evaluation on existing scenarios:
-```bash
-python scripts/run_single_loop.py --experiment-id baseline_eval --max-iterations 0
-```
+1. **Initial Evaluation** – run a baseline evaluation on existing scenarios:
+   ```bash
+   python scripts/run_single_loop.py --experiment-id baseline_eval --max-iterations 0
+   ```
+2. **Start Autoresearch** – launch the optimisation loop using the Codex backend:
+   ```bash
+   python scripts/run_single_loop.py --experiment-id exp_01 --backend codex --budget-profile fast
+   ```
+3. **Promote Best Candidate** – archive the top performer and update the leaderboard:
+   ```bash
+   python scripts/promote_best.py
+   ```
 
-### 2. Start Autoresearch
-Launch the optimization loop using the Codex backend:
-```bash
-python scripts/run_single_loop.py --experiment-id exp_01 --backend codex --budget-profile fast
-```
+## Scientific Mandate (`AGENTS.md`)
+All agent modifications must follow the mathematical hypotheses described there. The trusted boundary is strictly enforced; agents can only modify `src/stitching/editable/`.
 
-### 3. Promote Best Candidate
-Archive the top performer and update the leaderboard:
-```bash
-python scripts/promote_best.py
-```
+## License
+MIT License
 
-## Scientific Mandate (AGENTS.md)
-All agent modifications must follow the mathematical hypotheses described in `AGENTS.md`. The trusted boundary is strictly enforced; agents can only modify `src/stitching/editable/`.
+## Contributing
+- Follow the pull‑request template.
+- Commit style guidelines: run `black` and `isort` before commit.
+- Linting: run `flake8`.
+
