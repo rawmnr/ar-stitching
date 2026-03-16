@@ -11,6 +11,25 @@ def stationary_reference_bias(shape: tuple[int, int], bias: float) -> np.ndarray
     return np.full(shape, bias, dtype=float)
 
 
+def generate_instrument_zernike_bias(
+    shape: tuple[int, int],
+    coefficients: np.ndarray | None = None,
+) -> np.ndarray:
+    """Generate a static instrument bias field from Zernike coefficients."""
+    if coefficients is None or len(coefficients) == 0:
+        return np.zeros(shape, dtype=float)
+    
+    from stitching.trusted.bases.zernike import generate_zernike_surface
+    # We use the internal backend to generate the Zernike surface on the tile shape
+    bias_field = generate_zernike_surface(
+        coefficients, 
+        shape, 
+        indexing="noll", 
+        backend="internal"
+    )
+    return np.asarray(bias_field, dtype=float)
+
+
 def reference_bias_for_observation(
     base_bias: float,
     observation_index: int,
@@ -36,7 +55,7 @@ def reference_bias_for_observation(
     return total_bias
 
 
-def apply_reference_bias(z: np.ndarray, bias: float) -> np.ndarray:
-    """Add a scalar detector-frame reference bias."""
+def apply_reference_bias(z: np.ndarray, bias: float | np.ndarray) -> np.ndarray:
+    """Add a detector-frame reference bias (scalar or field)."""
 
     return np.asarray(z, dtype=float) + bias

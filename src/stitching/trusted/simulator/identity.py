@@ -7,7 +7,11 @@ import math
 import numpy as np
 
 from stitching.contracts import ScenarioConfig, SubApertureObservation, SurfaceTruth
-from stitching.trusted.instrument.bias import apply_reference_bias, reference_bias_for_observation
+from stitching.trusted.instrument.bias import (
+    apply_reference_bias,
+    generate_instrument_zernike_bias,
+    reference_bias_for_observation,
+)
 from stitching.trusted.noise.models import (
     add_gaussian_noise,
     add_low_frequency_noise,
@@ -157,6 +161,13 @@ def simulate_identity_observations(
         else:
             drift_surface_max = None
 
+    # 4. Pre-calculate static instrument Zernike bias (detector frame)
+    inst_z_coeffs = config.metadata.get("instrument_zernike_bias")
+    if inst_z_coeffs is not None:
+        static_inst_bias = generate_instrument_zernike_bias(tile_shape, np.array(inst_z_coeffs, dtype=float))
+    else:
+        static_inst_bias = 0.0
+
     for index, offset in enumerate(config.scan_offsets):
         rotation_deg = float(config.rotation_deg[min(index, len(config.rotation_deg) - 1)])
         center_xy = _tile_center(config.grid_shape, offset)
@@ -219,6 +230,7 @@ def simulate_identity_observations(
         effective_reference_bias = reference_bias_for_observation(config.reference_bias, index, config.metadata)
 
         z = apply_reference_bias(z, effective_reference_bias)
+        z = apply_reference_bias(z, static_inst_bias) # Static instrument field-dependent bias
         z = apply_nuisance_terms(z, nuisance_terms)
         z = add_gaussian_noise(z, config.gaussian_noise_std, seed=config.seed + index)
         z = add_outliers(z, config.outlier_fraction, magnitude=1.0, seed=config.seed + index, valid_mask=valid_mask)
