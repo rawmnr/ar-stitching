@@ -40,10 +40,11 @@ def surface_from_basis(
         valid_mask = np.ones(shape, dtype=bool)
     elif basis_name == "zernike":
         z = generate_zernike_surface(coefficients, shape, indexing="noll", backend="internal")
+        # Default Zernike mask is a unit circle spanning the full grid
         yy, xx = np.indices(shape, dtype=float)
-        x = 2.0 * xx / max(shape[1] - 1, 1) - 1.0
-        y = 2.0 * yy / max(shape[0] - 1, 1) - 1.0
-        valid_mask = x**2 + y**2 <= 1.0
+        cy, cx = (shape[0] - 1) / 2.0, (shape[1] - 1) / 2.0
+        r_max = min(shape) / 2.0
+        valid_mask = (yy - cy)**2 + (xx - cx)**2 <= r_max**2
     else:
         raise ValueError(f"Unsupported basis '{basis_name}'.")
 
@@ -80,7 +81,8 @@ def generate_identity_surface(config: ScenarioConfig) -> SurfaceTruth:
     # Optional mask override (e.g. for circular truth pupils)
     if metadata.get("truth_pupil") == "circular":
         from stitching.trusted.surface.footprint import circular_pupil_mask
-        mask = circular_pupil_mask(config.grid_shape, radius_fraction=float(metadata.get("truth_radius", 0.45)))
+        radius_frac = float(metadata.get("truth_radius_fraction", 0.48))
+        mask = circular_pupil_mask(config.grid_shape, radius_fraction=radius_frac)
         truth = SurfaceTruth(
             z=np.where(mask, truth.z, np.nan),
             valid_mask=mask,
