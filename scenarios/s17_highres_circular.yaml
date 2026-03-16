@@ -1,7 +1,7 @@
 scenario_id: s17_highres_circular
 description: Digital twin haute-résolution (256x256) avec pupilles et sous-pupilles circulaires.
 grid_shape: [256, 256]
-tile_shape: [64, 64]
+tile_shape: [128, 128]
 pixel_size: 1.0
 pattern_type: annular
 overlap_fraction: 0.3

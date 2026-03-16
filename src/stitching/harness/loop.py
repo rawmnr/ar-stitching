@@ -27,6 +27,7 @@ from stitching.harness.protocols import (
 )
 
 from stitching.harness.visualize_iteration import plot_iteration_report
+from stitching.harness.visualize_progress import generate_progress_plot
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,15 @@ class AutoresearchLoop:
                             self.backend.name
                         )
                         logger.info("Iteration report saved to %s", report_path)
+                        
+                        # Generate live progress plot
+                        progress_path = self.repo_root / "artifacts" / f"progress_{self.experiment_id}.png"
+                        generate_progress_plot(
+                            self.repo_root / "experiments",
+                            progress_path,
+                        )
                     except Exception as ve:
-                        logger.error("Failed to save iteration report: %s", ve)
+                        logger.error("Failed to save visualization: %s", ve)
 
                 logger.info(
                     "Verdict: %s | RMS: %.6f | Elapsed: %.1fs",
@@ -360,11 +368,11 @@ class AutoresearchLoop:
 
     def _build_failure_result(
         self, manifest, verdict, metrics, error, elapsed,
-        hypothesis="", diff="",
+        hypothesis="", diff="", reports=(),
     ) -> RunResult:
         return RunResult(
             manifest=manifest, verdict=verdict, metrics=metrics,
-            eval_reports=(), hypothesis=hypothesis or "N/A",
+            eval_reports=reports, hypothesis=hypothesis or "N/A",
             diff_patch=diff, elapsed_sec=elapsed,
             notes=(f"error: {error[:500]}",),
         )
