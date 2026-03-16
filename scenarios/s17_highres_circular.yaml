@@ -29,6 +29,7 @@ metadata:
   geometric_retrace_error: 0.1
   interpolation_order: 3
   ignore_piston: false
+  reference_bias_drift_step: 0.002
   instrument_zernike_bias: [
     0.0, 0.05, -0.03,  # Z1-Z3 (Piston, Tip, Tilt)
     0.12, 0.02, -0.04, # Z4-Z6 (Defocus, Astig x2)

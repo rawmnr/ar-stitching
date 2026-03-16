@@ -296,6 +296,7 @@ class OpenCodeCliBackend(AgentBackend):
             f"{urgency_label}Read .opencode_task.md for full instructions. "
             f"Current RMS={current_rms}. "
             f"Edit src/stitching/editable/candidate_current.py to reduce RMS. "
+            f"HINT: Try estimating Zernike instrument bias coefficients (Z1-Z36) simultaneously with the surface. "
             f"CRITICAL: Do not hardcode dimensions. "
             f"Use write_file tool NOW. Do not explain, just edit the file."
         )
