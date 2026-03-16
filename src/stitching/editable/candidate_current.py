@@ -126,7 +126,7 @@ class CandidateStitcher:
                 np.full(i_idx.size, col_j_tip, dtype=int),
                 np.full(i_idx.size, col_j_tilt, dtype=int),
             ])
-            row_indices.append(row_ids)
+            row_indices.append(np.tile(row_ids, 6))
             col_indices.append(col_idx)
             data_arr = np.concatenate([
                 np.full(i_idx.size, 1.0, dtype=float),

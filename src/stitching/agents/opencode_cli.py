@@ -346,11 +346,11 @@ class OpenCodeCliBackend(AgentBackend):
             "",
         ])
         
-        # Include abbreviated source code
+        # Include source code
         lines.extend([
-            "## Current Source (first 100 lines)",
+            "## Current Source",
             "```python",
-            "\n".join(ctx.candidate_source.splitlines()[:100]),
+            ctx.candidate_source,
             "```",
             "",
         ])
