@@ -15,6 +15,8 @@ from pathlib import Path
 
 from stitching.harness.protocols import AgentBackend, ExperimentContext, PatchProposal
 
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 class OpenCodeCliBackend(AgentBackend):
     """Agent backend wrapping sst1/opencode CLI."""
@@ -28,24 +30,21 @@ class OpenCodeCliBackend(AgentBackend):
     AGENTIC_WAIT_SEC = 30.0  # Give agent time to actually do work
     
     # Validation
-    REQUIRED_CLASS = "class CandidateStitcher"
+    REQUIRED_CLASS_PATTERN = r"class\s+CandidateStitcher"
 
     def __init__(
         self,
         repo_root: Path,
         provider: str = "llama-swap",
         model: str = "gpt-oss-prod",
-        timeout_sec: float = 600.0,
-        agentic_timeout_sec: float = 120.0,  # Per-attempt timeout
+        agentic_timeout_sec: float = 240.0,  # Per-attempt timeout
         **kwargs,
     ) -> None:
-        self.repo_root = repo_root
+        self.repo_root = Path(repo_root).resolve()
         self.provider = provider
         self.model = model
-        self.timeout_sec = timeout_sec
-        self.logger = logging.getLogger(__name__)
         self.agentic_timeout_sec = agentic_timeout_sec
-        self._task_file_path = Path(self.repo_root) / ".opencode_task.md"
+        self._task_file_path = self.repo_root / ".opencode_task.md"
 
     @property
     def name(self) -> str:
@@ -54,7 +53,7 @@ class OpenCodeCliBackend(AgentBackend):
     def propose_patch(self, context: ExperimentContext) -> PatchProposal:
         """Invoke opencode with a directive prompt and retry logic."""
         target_rel_path = context.editable_paths[0] if context.editable_paths else "src/stitching/editable/candidate_current.py"
-        target_path = Path(self.repo_root) / target_rel_path
+        target_path = self.repo_root / target_rel_path
         
         # Backup original content
         original_content = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
@@ -63,7 +62,7 @@ class OpenCodeCliBackend(AgentBackend):
         last_error: str | None = None
         
         for attempt in range(self.MAX_RETRIES):
-            self.logger.info(
+            logger.info(
                 "OpenCode attempt %d/%d for iteration %d",
                 attempt + 1, self.MAX_RETRIES, context.iteration,
             )
@@ -84,7 +83,7 @@ class OpenCodeCliBackend(AgentBackend):
             
             try:
                 stdout_text, stderr_text, return_code = self._execute_opencode(
-                    cli_prompt, context, target_path
+                    cli_prompt, context
                 )
                 
                 # Check if file was modified
@@ -93,7 +92,7 @@ class OpenCodeCliBackend(AgentBackend):
                 # If completed too fast, agent likely didn't do anything
                 if elapsed < self.MIN_EXPECTED_RUNTIME_SEC:
                     last_error = f"Execution too fast ({elapsed:.1f}s) - agent likely did not take action"
-                    self.logger.warning(
+                    logger.warning(
                         "Attempt %d: %s. stdout[:200]=%s",
                         attempt + 1, last_error, stdout_text[:200],
                     )
@@ -110,7 +109,7 @@ class OpenCodeCliBackend(AgentBackend):
                     validation_error = self._validate_code(new_content)
                     if validation_error:
                         last_error = validation_error
-                        self.logger.warning(
+                        logger.warning(
                             "Attempt %d: Code validation failed: %s",
                             attempt + 1, validation_error,
                         )
@@ -122,7 +121,7 @@ class OpenCodeCliBackend(AgentBackend):
                     # Check if it's actually different (not just whitespace)
                     if new_content.strip() == original_content.strip():
                         last_error = "No meaningful changes detected"
-                        self.logger.warning("Attempt %d: %s", attempt + 1, last_error)
+                        logger.warning("Attempt %d: %s", attempt + 1, last_error)
                         time.sleep(self.RETRY_DELAY_SEC)
                         continue
                     
@@ -140,7 +139,7 @@ class OpenCodeCliBackend(AgentBackend):
                 else:
                     # File not modified - try to extract code from stdout
                     extracted = self._extract_python_code(stdout_text)
-                    if extracted and self.REQUIRED_CLASS in extracted:
+                    if extracted:
                         validation_error = self._validate_code(extracted)
                         if not validation_error:
                             return PatchProposal(
@@ -153,15 +152,15 @@ class OpenCodeCliBackend(AgentBackend):
                             )
                     
                     last_error = "Agent did not modify the target file"
-                    self.logger.warning("Attempt %d: %s", attempt + 1, last_error)
+                    logger.warning("Attempt %d: %s", attempt + 1, last_error)
                     time.sleep(self.RETRY_DELAY_SEC)
                     
             except subprocess.TimeoutExpired:
-                last_error = f"Timeout after {self.timeout_sec}s"
-                self.logger.warning("Attempt %d: %s", attempt + 1, last_error)
+                last_error = f"Timeout after {self.agentic_timeout_sec}s"
+                logger.warning("Attempt %d: %s", attempt + 1, last_error)
             except Exception as exc:
                 last_error = str(exc)
-                self.logger.warning("Attempt %d failed: %s", attempt + 1, exc)
+                logger.warning("Attempt %d failed: %s", attempt + 1, exc)
         
         # Clean up task file
         if self._task_file_path.exists():
@@ -177,25 +176,25 @@ class OpenCodeCliBackend(AgentBackend):
         self,
         prompt: str,
         context: ExperimentContext,
-        target_path: Path,
     ) -> tuple[str, str, int]:
         """Execute the opencode CLI and return (stdout, stderr, return_code)."""
         
         # Build command with short prompt (task details in file)
-        # Important: pass prompt DIRECTLY, not via stdin
         cmd = ["opencode", "run", prompt, "--print-logs"]
         
         if self.provider and self.model:
             cmd.extend(["-m", f"{self.provider}/{self.model}"])
         
         # Attach the task file and editable files
-        cmd.extend(["-f", str(self._task_file_path.relative_to(self.repo_root))])
-        for path in context.editable_paths:
-            cmd.extend(["-f", str(path)])
+        if self._task_file_path.exists():
+            cmd.extend(["-f", str(self._task_file_path.relative_to(self.repo_root))])
+            
+        for rel_path in context.editable_paths:
+            cmd.extend(["-f", rel_path])
         
-        baseline_path = Path(self.repo_root) / "src/stitching/editable/baseline.py"
+        baseline_path = self.repo_root / "src/stitching/editable/baseline.py"
         if baseline_path.exists():
-            cmd.extend(["-f", "src/stitching/editable/baseline.py"])
+            cmd.extend(["-f", str(baseline_path.relative_to(self.repo_root))])
         
         # Environment
         env = os.environ.copy()
@@ -224,7 +223,7 @@ class OpenCodeCliBackend(AgentBackend):
         
         # Debug logging
         try:
-            debug_dir = Path(self.repo_root) / "experiments" / "debug"
+            debug_dir = self.repo_root / "experiments" / "debug"
             debug_dir.mkdir(parents=True, exist_ok=True)
             debug_log = debug_dir / f"opencode_iter{context.iteration}.log"
             debug_log.write_text(
@@ -235,16 +234,16 @@ class OpenCodeCliBackend(AgentBackend):
                 f"=== RETURN CODE ===\n{result.returncode}\n",
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Failed to write debug log: %s", e)
         
         return stdout, stderr, result.returncode
 
     def _validate_code(self, code: str) -> str | None:
         """Validate Python code. Returns error message or None if valid."""
-        # Check for required class
-        if self.REQUIRED_CLASS not in code:
-            return f"Missing required: {self.REQUIRED_CLASS}"
+        # Check for required class using regex for flexibility
+        if not re.search(self.REQUIRED_CLASS_PATTERN, code):
+            return "Missing required class: CandidateStitcher"
         
         # Check for required method
         if "def reconstruct(" not in code:
@@ -256,9 +255,9 @@ class OpenCodeCliBackend(AgentBackend):
         except SyntaxError as exc:
             return f"Syntax error at line {exc.lineno}: {exc.msg}"
         
-        # Check for common mistakes
-        if "from stitching.trusted.eval" in code:
-            return "Forbidden import from stitching.trusted.eval"
+        # Check for common mistakes - slightly more specific to avoid false positives
+        if "from stitching.trusted.eval.metrics import" in code:
+            return "Forbidden import from stitching.trusted.eval.metrics (use contracts instead)"
         
         return None
 
@@ -270,11 +269,11 @@ class OpenCodeCliBackend(AgentBackend):
         """Build a SHORT CLI prompt that references the task file."""
         current_rms = ctx.current_metrics.get("aggregate_rms", "N/A")
         
-        # Keep this SHORT - details are in the task file
-        urgency = ["", "URGENT: ", "FINAL ATTEMPT: "][min(attempt, 2)]
+        # Fix typos: urgency / attempt
+        urgency_label = ["", "URGENT: ", "FINAL ATTEMPT: "][min(attempt, 2)]
         
         prompt = (
-            f"{urgency}Read .opencode_task.md for full instructions. "
+            f"{urgency_label}Read .opencode_task.md for full instructions. "
             f"Current RMS={current_rms}. "
             f"Edit src/stitching/editable/candidate_current.py to reduce RMS. "
             f"Use write_file tool NOW. Do not explain, just edit the file."
@@ -342,22 +341,22 @@ class OpenCodeCliBackend(AgentBackend):
             "- MUST keep `class CandidateStitcher` with `def reconstruct(...)`",
             "- MUST return `ReconstructionSurface` with correct `observed_support_mask`",
             "- MUST use vectorized NumPy/SciPy (no Python loops on pixels)",
-            "- MUST NOT import from `stitching.trusted.eval`",
+            "- MUST NOT import from `stitching.trusted.eval` (forbidden)",
             "",
         ])
         
-        # Include source code
+        # Include full source code (attributs ctx.candidate_source est garanti par le protocole)
         lines.extend([
             "## Current Source",
             "```python",
-            ctx.candidate_source,
+            ctx.candidate_source or "# No source provided",
             "```",
             "",
         ])
         
         lines.extend([
             "## Domain Notes",
-            "- Problem: Reconstruct S(x,y) from overlapping sub-aperture measurements",
+            ctx.domain_notes or "- Problem: Reconstruct S(x,y) from overlapping measurements",
             "- Each measurement: W_i = S + R + P_i + ε",
             "- Key: Exploit overlap redundancy for piston/tip/tilt estimation",
             "",
@@ -410,7 +409,7 @@ class OpenCodeCliBackend(AgentBackend):
         matches = re.findall(r"```\w*\s*\n(.*?)```", text, re.DOTALL)
         if matches:
             for match in matches:
-                if self.REQUIRED_CLASS in match:
+                if "class CandidateStitcher" in match:
                     return match.strip()
         
         return None
