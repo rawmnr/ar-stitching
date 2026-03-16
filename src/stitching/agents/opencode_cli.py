@@ -37,13 +37,15 @@ class OpenCodeCliBackend(AgentBackend):
         repo_root: Path,
         provider: str = "llama-swap",
         model: str = "devstral-standard",
-        agentic_timeout_sec: float = 240.0,  # Per-attempt timeout
+        agentic_timeout_sec: float = 240.0,
+        title: str = "autoresearch",
         **kwargs,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.provider = provider
         self.model = model
         self.agentic_timeout_sec = agentic_timeout_sec
+        self.title = title
         self._task_file_path = self.repo_root / ".opencode_task.md"
 
     @property
@@ -180,7 +182,7 @@ class OpenCodeCliBackend(AgentBackend):
         """Execute the opencode CLI and return (stdout, stderr, return_code)."""
         
         # Build command with short prompt (task details in file)
-        cmd = ["opencode", "run", prompt, "--print-logs"]
+        cmd = ["opencode", "run", prompt, "--print-logs", "--title", self.title]
         
         if self.provider and self.model:
             cmd.extend(["-m", f"{self.provider}/{self.model}"])

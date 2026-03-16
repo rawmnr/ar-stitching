@@ -160,7 +160,7 @@ col_idx = np.concatenate([col_idx, reg_cols])
 data_arr = np.concatenate([data_arr, reg_data])
 # Construct the augmented sparse matrix
 system = sparse.coo_matrix((data_arr, (row_idx, col_idx)), shape=(row_offset + 3 * len(observation_list), len(observation_list) * 3))
-            sol = lsqr(system, rhs_arr)[0]
+sol = lsqr(system, rhs_arr)[0]
             sol = sol.reshape((len(observation_list), 3))
             piston_shifts = sol[:, 0]
             tip_shifts = sol[:, 1]

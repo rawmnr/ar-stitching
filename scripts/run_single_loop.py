@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--experiment-id", default="exp_default")
     parser.add_argument("--backend", default="codex")
     parser.add_argument("--model", default=None)
+    parser.add_argument("--title", default="autoresearch", help="Title for opencode session")
     parser.add_argument("--max-iterations", type=int, default=100)
     parser.add_argument("--budget-profile", default="default", choices=["fast", "default", "overnight"])
     parser.add_argument("--scenarios", nargs="*", help="Specific scenario YAML files")
@@ -70,6 +71,10 @@ def main() -> None:
 
     if args.model:
         backend_kwargs["model"] = args.model
+
+    # Add title for opencode sessions
+    if args.title:
+        backend_kwargs["title"] = args.title
 
     loop = AutoresearchLoop(
         repo_root=args.repo_root,
