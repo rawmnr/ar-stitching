@@ -41,7 +41,7 @@ where = ["src"]
 
 [[tool.uv.index]]
 name = "safran"
-url = "https://artifacts.cloud.safran/repository/pypi-group/simple/"
+url = "https://artifacts.cloud.one.ad/repository/pypi-group/simple/"
 default = true
 testpaths = ["tests"]
 pythonpath = ["src"]
