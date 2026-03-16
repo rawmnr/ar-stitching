@@ -15,10 +15,15 @@ backends:
     model: claude-sonnet-4-20250514
     timeout_sec: 120
 
+  opencode_gpt_oss:
+    provider: llama-swap
+    model: gpt-oss-prod
+    timeout_sec: 240
+
   opencode_local:
-    provider: openai-compatible
-    model: qwen2.5-coder-32b
+    provider: llama-swap
+    model: qwen3-coder
     timeout_sec: 180
 
 default_backend: codex
-fallback_backend: opencode_anthropic
+fallback_backend: opencode_gpt_oss

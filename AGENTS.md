@@ -22,12 +22,15 @@ géométriques et temporels.
 - **RMS agrégé** = √(mean(rms²)) sur tous les scénarios
 
 ## Métriques secondaires (surveillées, garde-fous)
-- `footprint_iou ≥ 0.99`
-- `valid_pixel_recall ≥ 0.99`
-- `valid_pixel_precision ≥ 0.99`
-- `hf_retention` (doit rester stable ou croître)
-- `runtime_sec < 300s` par scénario
-- `mismatch_rms` (cohérence interne)
+
+| Métrique | Valeur cible | Mesure |
+|---|---|---|
+| `footprint_iou` | ≥ 0.99 | Intersection‑over‑Union de la zone observée |
+| `valid_pixel_recall` | ≥ 0.99 | Pixel recall valide |
+| `valid_pixel_precision` | ≥ 0.99 | Pixel precision valide |
+| `hf_retention` | stable ou croît | Taux de rétention de haute fréquence |
+| `runtime_sec` | < 300 | Temps d’exécution par scénario |
+| `mismatch_rms` | cohérence interne | Différence RMS interne |
 
 ## Règles scientifiques
 1. **Hypothèse obligatoire** : avant chaque modification, énoncer l'hypothèse
@@ -68,3 +71,14 @@ class CandidateStitcher:
 - Moins de lignes de code
 - Usage de `scipy.sparse` plutôt que matrices denses
 - Séparation claire des étapes (estimation → correction → assemblage)
+
+## Glossaire
+
+| Terme | Description |
+|---|---|
+| `footprint_iou` | Intersection‑over‑Union de la zone observée |
+| `valid_pixel_recall` | Pixel recall valide |
+| `valid_pixel_precision` | Pixel precision valide |
+| `hf_retention` | Taux de rétention de haute fréquence |
+| `runtime_sec` | Temps d’exécution par scénario |
+| `mismatch_rms` | Différence RMS interne |

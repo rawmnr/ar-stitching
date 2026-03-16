@@ -14,8 +14,8 @@ class OpenCodeCliBackend(AgentBackend):
     def __init__(
         self,
         repo_root: Path,
-        provider: str = "gpt-oss-prod",
-        model: str = "claude-sonnet-4-20250514",
+        provider: str = "llama-swap",
+        model: str = "gpt-oss-prod",
         timeout_sec: float = 120.0,
     ) -> None:
         self.repo_root = repo_root
@@ -31,9 +31,15 @@ class OpenCodeCliBackend(AgentBackend):
         """Invoke opencode with a structured prompt."""
         prompt = self._build_prompt(context)
 
+        # Build command with explicit model if provider/model are set
+        cmd = ["opencode", "--non-interactive"]
+        if self.provider and self.model:
+            model_id = f"{self.provider}/{self.model}"
+            cmd.extend(["-m", model_id])
+
         # OpenCode uses stdin for prompts in non-interactive mode
         result = subprocess.run(
-            ["opencode", "--non-interactive"],
+            cmd,
             input=prompt,
             cwd=str(self.repo_root),
             capture_output=True,
@@ -59,8 +65,14 @@ class OpenCodeCliBackend(AgentBackend):
 
     def analyze_failure(self, context: ExperimentContext, error: str) -> str:
         prompt = f"/inspect-failure\nError: {error}\nRMS: {context.current_metrics.get('aggregate_rms')}"
+        
+        cmd = ["opencode", "--non-interactive"]
+        if self.provider and self.model:
+            model_id = f"{self.provider}/{self.model}"
+            cmd.extend(["-m", model_id])
+
         result = subprocess.run(
-            ["opencode", "--non-interactive"],
+            cmd,
             input=prompt,
             cwd=str(self.repo_root),
             capture_output=True,
