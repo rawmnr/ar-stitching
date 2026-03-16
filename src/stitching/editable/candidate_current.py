@@ -158,10 +158,10 @@ class CandidateStitcher:
 
         adjusted_values = values + piston_shifts[obs_indices]
         global_area = global_shape[0] * global_shape[1]
-        sum_z = np.zeros(global_area, dtype=float)
-        count = np.zeros(global_area, dtype=int)
-        np.add.at(sum_z, global_indices, adjusted_values)
-        np.add.at(count, global_indices, 1)
+        
+        # Use efficient np.bincount instead of np.add.at for global aggregation
+        sum_z = np.bincount(global_indices, weights=adjusted_values, minlength=global_area).astype(float)
+        count = np.bincount(global_indices, minlength=global_area).astype(int)
 
         valid_flat = count > 0
         averaged = np.zeros_like(sum_z)

@@ -52,7 +52,7 @@ basis-extra = [
 dev = [
     { name = "pytest" },
 ]
-optics = [
+optiq = [
     { name = "optiland" },
 ]
 zernike-alt = [
@@ -65,14 +65,14 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", specifier = ">=2.28.0" },
-    { name = "optiland", marker = "extra == 'optics'" },
+    { name = "optiland", marker = "extra == 'optiq'" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "prysm", marker = "extra == 'zernike-alt'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "scipy", specifier = ">=1.13" },
 ]
-provides-extras = ["dev", "optics", "zernike-alt", "basis-extra"]
+provides-extras = ["dev", "optiq", "zernike-alt", "basis-extra"]
 
 [[package]]
 name = "asdf"
