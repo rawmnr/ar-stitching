@@ -14,7 +14,7 @@ class OpenCodeCliBackend(AgentBackend):
     def __init__(
         self,
         repo_root: Path,
-        provider: str = "anthropic",
+        provider: str = "gpt-oss-prod",
         model: str = "claude-sonnet-4-20250514",
         timeout_sec: float = 120.0,
     ) -> None:
