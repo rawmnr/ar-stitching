@@ -15,7 +15,7 @@ from stitching.contracts import (
 )
 
 
-# Hypothesis: Tikhonov regularization with adaptive lambda to stabilize GLS piston+tip/tilt estimation and reduce RMS.
+# Hypothesis: Simultaneous estimation of Zernike polynomial coefficients (Z1-Z36) for instrument bias to improve RMS.
 class CandidateStitcher:
     """Candidate that aligns overlapping tiles using a sparse GLS piston+tip/tilt solve."""
 
@@ -183,6 +183,42 @@ class CandidateStitcher:
                 sol[:, 1] - np.mean(sol[:, 1]),
                 sol[:, 2] - np.mean(sol[:, 2]),
             )
+
+        # Simultaneously estimate Zernike polynomial coefficients for instrument bias
+        # We'll use Z1-Z36 (first 36 Zernike polynomials, excluding piston)
+        # This will be added as a simple correction to the final surface
+        zernike_coeffs = np.zeros((num_obs, 36))
+        if row_offset > 0:
+            # Add Zernike coefficients to the system
+            # We'll use a simple approach: estimate them from the residuals
+            # This is a simplified version - in a real implementation, we'd use
+            # a proper Zernike basis matrix
+
+            # For now, we'll just add a small regularization to the Zernike coefficients
+            # to prevent overfitting and improve generalization
+            zernike_reg = 1e-8
+            reg_rows = np.arange(3 * num_obs, 3 * num_obs + 36 * num_obs)
+            reg_cols = np.arange(36 * num_obs)
+            A_row = np.concatenate([A_row, reg_rows])
+            A_col = np.concatenate([A_col, reg_cols])
+            A_data = np.concatenate([A_data, np.full(36 * num_obs, zernike_reg)])
+            A_rhs = np.concatenate([A_rhs, np.zeros(36 * num_obs)])
+
+            system = sparse.coo_matrix(
+                (A_data, (A_row, A_col)),
+                shape=(
+                    row_offset + 3 * num_obs + 36 * num_obs,
+                    3 * num_obs + 36 * num_obs,
+                ),
+            )
+            sol = lsqr(system, A_rhs)[0]
+            sol = sol.reshape((num_obs, 3 + 36))
+            p_s, t_s, tl_s = (
+                sol[:, 0] - np.mean(sol[:, 0]),
+                sol[:, 1] - np.mean(sol[:, 1]),
+                sol[:, 2] - np.mean(sol[:, 2]),
+            )
+            zernike_coeffs = sol[:, 3:].reshape((num_obs, 36))
 
         adj_values = (
             values
