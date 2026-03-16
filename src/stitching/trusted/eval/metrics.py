@@ -199,5 +199,8 @@ def build_eval_report(
         mismatch_metrics=mismatch,
         runtime_sec=runtime_sec,
         accepted=accepted,
+        config=config,
+        truth=truth,
+        reconstruction=candidate,
         notes=tuple(notes),
     )

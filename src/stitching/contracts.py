@@ -169,4 +169,20 @@ class EvalReport:
     mismatch_metrics: dict[str, float]
     runtime_sec: float
     accepted: bool
+    # Internal references for analysis/visualization (not serialized to JSON by default)
+    config: ScenarioConfig | None = field(default=None, repr=False)
+    truth: SurfaceTruth | None = field(default=None, repr=False)
+    reconstruction: ReconstructionSurface | None = field(default=None, repr=False)
     notes: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a serializable dictionary of results."""
+        return {
+            "scenario_id": self.scenario_id,
+            "geometry": self.geometry_metrics,
+            "signal": self.signal_metrics,
+            "mismatch": self.mismatch_metrics,
+            "runtime_sec": self.runtime_sec,
+            "accepted": self.accepted,
+            "notes": self.notes,
+        }
