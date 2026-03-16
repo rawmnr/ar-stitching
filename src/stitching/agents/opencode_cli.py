@@ -288,17 +288,18 @@ class OpenCodeCliBackend(AgentBackend):
     ) -> str:
         """Build a SHORT CLI prompt that references the task file."""
         current_rms = ctx.current_metrics.get("aggregate_rms", "N/A")
-        
+
         # Fix typos: urgency / attempt
         urgency_label = ["", "URGENT: ", "FINAL ATTEMPT: "][min(attempt, 2)]
-        
+
         prompt = (
             f"{urgency_label}Read .opencode_task.md for full instructions. "
             f"Current RMS={current_rms}. "
             f"Edit src/stitching/editable/candidate_current.py to reduce RMS. "
+            f"CRITICAL: Do not hardcode dimensions. "
             f"Use write_file tool NOW. Do not explain, just edit the file."
         )
-        
+
         return prompt
 
     def _build_task_file(
@@ -308,17 +309,24 @@ class OpenCodeCliBackend(AgentBackend):
         previous_error: str | None = None,
     ) -> str:
         """Build a detailed task file for the agent."""
-        
+
         current_rms = ctx.current_metrics.get("aggregate_rms", "N/A")
         best_rms = ctx.best_metrics.get("aggregate_rms", "N/A")
-        
+
         lines = [
             "# Autoresearch Optimization Task",
             "",
             "## CRITICAL: You are an AUTONOMOUS agent. DO NOT ask questions.",
             "## You MUST use the `write_file` or `edit` tool to modify code.",
             "",
+            "## IMPORTANT: Robustness to Scale",
+            "- DO NOT hardcode array dimensions (e.g. 16, 48, 128).",
+            "- Your code must handle any global_shape (e.g. 128x128 or 64x64).",
+            "- Your code must handle any number of observations (e.g. 16 or 18).",
+            "- Always derive dimensions from the input `observations` and `config`.",
+            "",
             "---",
+
             "",
             "## Objective",
             f"Improve `src/stitching/editable/candidate_current.py` to reduce aggregate RMS.",

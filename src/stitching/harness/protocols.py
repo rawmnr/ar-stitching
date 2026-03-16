@@ -116,9 +116,9 @@ class RunResult:
     manifest: RunManifest
     verdict: RunVerdict
     metrics: dict[str, float]
-    eval_reports: tuple[EvalReport, ...]
-    hypothesis: str
-    diff_patch: str
-    elapsed_sec: float
+    eval_reports: tuple[EvalReport, ...] = field(default_factory=tuple)
+    hypothesis: str = "N/A"
+    diff_patch: str | None = None
+    elapsed_sec: float = 0.0
     notes: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
