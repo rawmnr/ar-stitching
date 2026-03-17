@@ -14,7 +14,7 @@ class CandidateStitcher:
         observations: tuple[SubApertureObservation, ...],
         config: ScenarioConfig,
     ) -> ReconstructionSurface:
-        # 1. Estimate alignment parameters (Piston) via Global Least Squares
+        # 1. Estimate alignment parameters [Piston, Tip, Tilt, Focus] via Global Least Squares
         nuisances = self._solve_global_alignment(observations)
         
         global_shape = observations[0].global_shape
@@ -24,13 +24,19 @@ class CandidateStitcher:
 
         # 2. Correct and Assemble
         for i, obs in enumerate(observations):
-            # Apply estimated piston correction
-            piston = nuisances[i, 0]
-            z_corr = obs.z - piston
-            
-            cx, cy = obs.center_xy
             rows, cols = obs.tile_shape
             
+            # Reconstruct the nuisance model for this observation
+            yy, xx = np.indices(obs.tile_shape, dtype=float)
+            y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
+            x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
+            
+            p, tip, tilt, focus = nuisances[i]
+            model = p + tip * y_norm + tilt * x_norm + focus * (x_norm**2 + y_norm**2)
+            
+            z_corr = obs.z - model
+            
+            cx, cy = obs.center_xy
             top = int(round(cy - (rows - 1) / 2.0))
             left = int(round(cx - (cols - 1) / 2.0))
             
@@ -57,19 +63,26 @@ class CandidateStitcher:
             valid_mask=valid_mask,
             source_observation_ids=tuple(o.observation_id for o in observations),
             observed_support_mask=support,
-            metadata={"method": "global_least_squares_piston"},
+            metadata={"method": "global_least_squares_full_alignment"},
         )
 
     def _solve_global_alignment(self, observations: tuple[SubApertureObservation, ...]) -> np.ndarray:
-        """Solve for per-subaperture alignment nuisances (currently Piston only)."""
+        """Solve for per-subaperture alignment nuisances [Piston, Tip, Tilt, Focus]."""
         n_obs = len(observations)
+        n_params = 4 # [Piston, Tip, Tilt, Focus]
         if n_obs <= 1:
-            return np.zeros((n_obs, 4)) # [Piston, Tip, Tilt, Focus]
+            return np.zeros((n_obs, n_params))
 
-        # Map global pixels to contributions for overlap detection
         global_shape = observations[0].global_shape
-        pixel_to_obs = [[] for _ in range(global_shape[0] * global_shape[1])]
         
+        # Vectorized collection of all valid pixels across all observations
+        all_obs_indices = []
+        all_flat_indices = []
+        all_z = []
+        all_xn = []
+        all_yn = []
+        all_fn = []
+
         for i, obs in enumerate(observations):
             rows, cols = obs.tile_shape
             top = int(round(obs.center_xy[1] - (rows - 1) / 2.0))
@@ -79,46 +92,97 @@ class CandidateStitcher:
             gy, gx = yy + top, xx + left
             valid_global = (gy >= 0) & (gy < global_shape[0]) & (gx >= 0) & (gx < global_shape[1])
             
-            flat_idx = gy[valid_global] * global_shape[1] + gx[valid_global]
-            for idx, val in zip(flat_idx, obs.z[yy[valid_global], xx[valid_global]]):
-                pixel_to_obs[idx].append((i, val))
+            # Sub-selection
+            yy, xx = yy[valid_global], xx[valid_global]
+            gy, gx = gy[valid_global], gx[valid_global]
+            
+            y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
+            x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
+            
+            all_obs_indices.append(np.full(len(yy), i, dtype=int))
+            all_flat_indices.append(gy * global_shape[1] + gx)
+            all_z.append(obs.z[yy, xx])
+            all_xn.append(x_norm)
+            all_yn.append(y_norm)
+            all_fn.append(x_norm**2 + y_norm**2)
 
-        # Build Sparse Matrix A and vector b
-        # Equation: (P_i - P_j) = S_i - S_j
+        obs_idx = np.concatenate(all_obs_indices)
+        flat_idx = np.concatenate(all_flat_indices)
+        z_vals = np.concatenate(all_z)
+        xn_vals = np.concatenate(all_xn)
+        yn_vals = np.concatenate(all_yn)
+        fn_vals = np.concatenate(all_fn)
+
+        # Sort by flat_idx to group observations by pixel
+        sort_order = np.argsort(flat_idx)
+        obs_idx = obs_idx[sort_order]
+        flat_idx = flat_idx[sort_order]
+        z_vals = z_vals[sort_order]
+        xn_vals = xn_vals[sort_order]
+        yn_vals = yn_vals[sort_order]
+        fn_vals = fn_vals[sort_order]
+
+        # Find boundaries of pixel groups
+        diff = np.diff(flat_idx)
+        boundaries = np.where(diff > 0)[0] + 1
+        boundaries = np.concatenate(([0], boundaries, [len(flat_idx)]))
+
+        # Build Sparse Matrix A and vector b using groups
         rows_a, cols_a, data_a = [], [], []
         b = []
+        row_count = 0
         
-        row_idx = 0
-        for contributions in pixel_to_obs:
-            if len(contributions) < 2:
+        # Only iterate over groups with size > 1 (overlaps)
+        for s, e in zip(boundaries[:-1], boundaries[1:]):
+            if e - s < 2:
                 continue
             
-            # Use the first observation in the pixel as a reference for others
-            ref_idx, ref_val = contributions[0]
-            for i in range(1, len(contributions)):
-                other_idx, other_val = contributions[i]
+            # Use first obs in group as reference
+            ref_o = obs_idx[s]
+            ref_z = z_vals[s]
+            ref_xn = xn_vals[s]
+            ref_yn = yn_vals[s]
+            ref_fn = fn_vals[s]
+            
+            for j in range(s + 1, e):
+                oth_o = obs_idx[j]
+                oth_z = z_vals[j]
+                oth_xn = xn_vals[j]
+                oth_yn = yn_vals[j]
+                oth_fn = fn_vals[j]
                 
-                # Row: 1*P_ref - 1*P_other = S_ref - S_other
-                rows_a.extend([row_idx, row_idx])
-                cols_a.extend([ref_idx, other_idx])
-                data_a.extend([1.0, -1.0])
-                b.append(ref_val - other_val)
-                row_idx += 1
+                # Equation: Model_ref - Model_oth = S_ref - S_oth
+                # Ref
+                rows_a.extend([row_count] * 4)
+                cols_a.extend([ref_o * n_params + k for k in range(4)])
+                data_a.extend([1.0, ref_yn, ref_xn, ref_fn])
+                # Oth
+                rows_a.extend([row_count] * 4)
+                cols_a.extend([oth_o * n_params + k for k in range(4)])
+                data_a.extend([-1.0, -oth_yn, -oth_xn, -oth_fn])
+                
+                b.append(ref_z - oth_z)
+                row_count += 1
 
         if not b:
-            return np.zeros((n_obs, 4))
+            return np.zeros((n_obs, n_params))
 
-        A = sp.csr_matrix((data_a, (rows_a, cols_a)), shape=(row_idx, n_obs))
+        A = sp.csr_matrix((data_a, (rows_a, cols_a)), shape=(row_count, n_obs * n_params))
         
-        # Regularize to fix global piston (set P0 = 0)
-        # Adding a small identity term or a hard constraint
-        A_reg = sp.vstack([A, sp.csr_matrix(([1.0], ([0], [0])), shape=(1, n_obs))])
-        b_reg = np.concatenate([b, [0.0]])
+        # Constraint: Sum of parameters = 0
+        C_data, C_rows, C_cols = [], [], []
+        for k in range(n_params):
+            for i in range(n_obs):
+                C_data.append(1.0)
+                C_rows.append(k)
+                C_cols.append(i * n_params + k)
+        
+        Constraint = sp.csr_matrix((C_data, (C_rows, C_cols)), shape=(n_params, n_obs * n_params))
+        
+        A_final = sp.vstack([A, Constraint])
+        b_final = np.concatenate([b, np.zeros(n_params)])
 
-        # Solve LS with damping (Tikhonov regularization) to prevent over-fitting
-        # especially for higher order modes like focus if they are added later.
-        x, *_ = spla.lsqr(A_reg, b_reg, damp=1e-4, atol=1e-8, btol=1e-8)
+        # Solve LS with damping
+        x, *_ = spla.lsqr(A_final, b_final, damp=1e-8, atol=1e-10, btol=1e-10)
         
-        nuisances = np.zeros((n_obs, 4))
-        nuisances[:, 0] = x
-        return nuisances
+        return x.reshape((n_obs, n_params))

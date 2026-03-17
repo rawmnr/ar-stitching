@@ -5,13 +5,18 @@ Optimiser itérativement l'algorithme de stitching optique dans
 `src/stitching/editable/candidate_current.py` en minimisant l'erreur RMS
 agrégée sur la suite de scénarios.
 
-**ÉTAT ACTUEL** : Une structure de solveur global (Piston uniquement) a été
-pré-implémentée dans `candidate_current.py`.
+**ÉTAT ACTUEL** : Le solveur Global Least Squares (Piston, Tip, Tilt, Focus) est
+opérationnel. Les sous-pupilles sont raccordées.
 
-**PROCHAINE ÉTAPE (PRIORITÉ)** : Étendre le solveur `_solve_global_alignment` pour
-estimer également le **Tip, Tilt et Focus** (indices 1, 2, 3 du vecteur d'état
-par sous-pupille). Voir `docs/stitching_implementation_guide.md` pour
-le modèle mathématique complet.
+**NOUVELLE PRIORITÉ : Roadmap Milestone 1 & 2** (Voir `docs/stitching_implementation_guide.md`)
+1.  **Milestone 1 (Robustesse)** : Implémenter l'**IRLS avec poids de Huber** dans
+    le solveur pour ignorer les outliers (pixels morts, pics de bruit) très présents dans `s17`.
+2.  **Milestone 2 (Auto-calibration scalaire)** : Estimer une valeur de biais
+    statique $B$ (constante) commune à toutes les sous-pupilles. Cela réduira
+    le biais global de reconstruction.
+
+**INTERDICTION** : Ne pas tenter le Milestone 3 (champ de Zernike) tant que le
+RMS n'est pas descendu significativement avec le Milestone 2.
 
 ## Chemins éditables (SEULS fichiers modifiables)
 - `src/stitching/editable/candidate_current.py`

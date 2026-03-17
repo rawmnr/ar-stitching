@@ -1,42 +1,45 @@
-# Stitching Implementation Guide: Least-Squares Alignment
+# Stitching Implementation Guide: Advanced Robust Optimization
 
-## Mathematical Model
+## 1. Mathematical Model with Reference Bias
 
-Each observation $S_i(\mathbf{r})$ is modeled as the sum of the true surface $W(\mathbf{r})$ and a set of sub-aperture specific alignment nuisances (piston, tip, tilt, focus):
+Each observation $S_i(\mathbf{r})$ includes a stationary instrument bias $B(x, y)$:
 
-$$S_i(\mathbf{r}) = W(\mathbf{r}) + p_i + tx_i \cdot x + ty_i \cdot y + f_i \cdot (x^2 + y^2) + \epsilon$$
+$$S_i(\mathbf{r}) = W(\mathbf{r}) + \text{Model}_i(x, y) + B(x, y) + \epsilon$$
 
-where $(x, y)$ are normalized detector coordinates in $[-1, 1]$.
+Where:
+- $W(\mathbf{r})$ is the object truth.
+- $\text{Model}_i(x, y) = p_i + tx_i x + ty_i y + f_i (x^2+y^2)$ (Alignment).
+- $B(x, y)$ is the **Reference Bias** (Stationary in detector frame).
 
-## Objective Function
+## 2. Simultaneous Calibration and Stitching (SCS)
 
-To stitch the sub-apertures, we minimize the squared difference in all overlapping regions $O_{i,j}$:
+To solve for both alignment and bias, use an iterative approach:
 
-$$\chi^2 = \sum_{i,j} \iint_{O_{i,j}} w(\mathbf{r}) [ (S_i(\mathbf{r}) - \text{model}_i(\mathbf{r})) - (S_j(\mathbf{r}) - \text{model}_j(\mathbf{r})) ]^2 d\mathbf{r}$$
+### Step A: Global Alignment (Fixed Bias)
+Solve for all $\mathbf{x}_i$ by minimizing:
+$$\sum_{i,j} \iint_{O_{i,j}} [ (S_i - B - \text{Model}_i) - (S_j - B - \text{Model}_j) ]^2$$
+*This is the current GLS solver, just subtract the current estimate of $B$ from $S_i$ first.*
 
-where $\text{model}_i(\mathbf{r}) = p_i + tx_i x + ty_i y + f_i (x^2+y^2)$.
+### Step B: Bias Estimation (Fixed Alignment)
+The bias $B(x, y)$ is the average residual across all observations in the detector frame:
+1. For each observation $i$, compute the local residual: 
+   $R_i(x, y) = S_i(x, y) - \text{Model}_i(\hat{\mathbf{x}}_i) - W_{\text{recon}}(\mathbf{r})$
+2. Average all $R_i(x, y)$ to get a raw bias map $B_{\text{raw}}(x, y)$.
+3. **Regularize**: Fit Zernike polynomials (e.g., up to Z15) to $B_{\text{raw}}$ to get a smooth $B(x, y)$.
 
-## Implementation Strategy (Global Solver)
+## 3. Robustness (Handling Outliers)
 
-1. **Overlap Detection**: Identify pairs of observations $(i, j)$ that overlap.
-2. **Design Matrix $A$**: For each pixel $k$ in an overlap $O_{i,j}$, create a row in the sparse matrix $A$:
-   - The row represents the constraint: $(\text{model}_i - \text{model}_j) = (S_i - S_j)$
-   - Columns correspond to the unknown parameters for all sub-apertures: $\mathbf{x} = [p_0, tx_0, ty_0, f_0, p_1, tx_1, \dots]^T$.
-   - For a pixel at $(x, y)$ in $O_{i,j}$, the row has:
-     - $+1, +x, +y, +(x^2+y^2)$ at indices for sub-aperture $i$.
-     - $-1, -x, -y, -(x^2+y^2)$ at indices for sub-aperture $j$.
-3. **Data Vector $b$**: The value for this row is $S_i(x,y) - S_j(x,y)$.
-4. **Weighted Least Squares**: Solve $(A^T W A) \mathbf{x} = A^T W b$.
-   - Use `scipy.sparse.linalg.lsqr` for efficiency.
-   - **Crucial**: Fix one sub-aperture (e.g., $p_0=0, tx_0=0, ty_0=0, f_0=0$) to remove the global rank deficiency (singular matrix).
-5. **Regularization (Damping)**: To prevent over-fitting (e.g., estimating focus where none exists), use the `damp` parameter in `lsqr`. 
-   - A value of `1e-4` to `1e-2` forces parameters toward zero if they don't improve the residuals significantly.
-   - Equation solved: $(A^T A + \lambda I) \mathbf{x} = A^T b$.
-6. **Reconstruction**: Apply the estimated parameters to correct each observation:
-   $S_i^{\text{corrected}} = S_i - \text{model}_i(\hat{\mathbf{x}})$
-   Then perform a simple mean or weighted average of the corrected observations.
+To ignore dead pixels and spikes, replace standard Least Squares with **Iteratively Reweighted Least Squares (IRLS)**:
+1. Compute residuals $r = Ax - b$.
+2. Compute weights $w = \text{Huber}(r)$:
+   - $w = 1.0$ if $|r| < \sigma$
+   - $w = \sigma / |r|$ if $|r| \ge \sigma$
+3. Solve $A^T W A x = A^T W b$.
 
-## Recommended Libraries
-- `numpy`
-- `scipy.sparse` (for the matrix $A$)
-- `scipy.sparse.linalg` (for the `lsqr` solver)
+## 4. Implementation Curriculum (The Roadmap)
+
+**Do not try to implement everything at once.**
+
+- **Milestone 1**: Robust GLS. Implement IRLS with Huber weights in `_solve_global_alignment` to handle outliers.
+- **Milestone 2**: Scalar Self-Calib. Estimate a single constant value for $B$ (the average detector offset).
+- **Milestone 3**: Zernike Self-Calib. Implement the full SCS loop to estimate the field $B(x,y)$.
