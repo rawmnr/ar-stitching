@@ -3,8 +3,13 @@
 ## Mission
 Optimiser itérativement l'algorithme de stitching optique dans
 `src/stitching/editable/candidate_current.py` en minimisant l'erreur RMS
-agrégée sur la suite de scénarios, tout en respectant les garde-fous
-géométriques et temporels.
+agrégée sur la suite de scénarios.
+
+**IMPÉRATIF ARCHITECTURAL** : L'algorithme DOIT implémenter une correction
+conjointe des erreurs d'alignement (Piston, Tip, Tilt, Focus) par **Moindres
+Carrés (GLS/WLS)** sur les zones de recouvrement. Une simple moyenne (mean)
+est insuffisante pour les scénarios avec `alignment_term`. Voir `docs/stitching_implementation_guide.md`
+pour les détails mathématiques.
 
 ## Chemins éditables (SEULS fichiers modifiables)
 - `src/stitching/editable/candidate_current.py`
@@ -47,13 +52,16 @@ géométriques et temporels.
    Pas de boucles Python sur les pixels.
 
 ## Vecteurs de recherche recommandés (par priorité)
-1. Correction de piston par overlaps (déjà initié)
-2. GLS simultané : piston + tip + tilt par moindres carrés
-3. Régularisation de Tikhonov (explorer λ ∈ [1e-10, 1e-2])
-4. Huber M-estimateur + IRLS pour robustesse aux outliers
-5. Hybride CS/SC pour auto-calibration du biais de référence
-6. Optimisation alternée pour retrace error
-7. Pondération spatiale des overlaps (SNR-aware)
+1. **Solveur Global (Mandat)** : Résolution simultanée des vecteurs d'état
+   $\mathbf{x} = [p_i, tx_i, ty_i, f_i]$ pour chaque sous-pupille $i$ en minimisant
+   $\sum_{i,j} \iint_{O_{i,j}} (S_i(\mathbf{r}) - S_j(\mathbf{r}))^2 d\mathbf{r}$
+   où $O_{i,j}$ est l'intersection des sous-pupilles $i$ et $j$.
+2. **Robustesse (Huber/IRLS)** : Utiliser des poids itératifs pour ignorer les
+   outliers et les bords de pupille dégradés dans le solveur.
+3. **Pondération SNR** : Utiliser `detector_edge_roll_off` pour pondérer
+   faiblement les bords dans la matrice normale.
+4. **Auto-calibration** : Estimer un biais de référence statique commun à toutes
+   les poses en même temps que les paramètres d'alignement.
 
 ## Contrat du candidat
 ```python
