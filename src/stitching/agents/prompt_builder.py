@@ -6,17 +6,6 @@ from pathlib import Path
 
 from stitching.harness.protocols import ExperimentContext
 
-# Ultra-concise domain knowledge
-DOMAIN_NOTES = """## Task: Reconstruct global surface S(x,y) from overlapping sub-aperture measurements.
-- Each W_i = S + R + P_i + ε (reference bias + piston/tip/tilt + noise)
-- Data: SubApertureObservation(z, valid_mask, center_xy, tile_shape, global_shape)
-- Output: ReconstructionSurface(z, valid_mask, observed_support_mask)
-
-## What Works
-- Track overlap_count per pixel, scale overlapping regions (0.99-0.997)
-- GLS: solve piston/tip/tilt via scipy.linalg.lstsq on overlaps
-- Vectorized NumPy only (no pixel loops)"""
-
 
 def build_experiment_context(
     experiment_id: str,
@@ -43,50 +32,73 @@ def build_experiment_context(
     # Context summary
     curr_rms = current_metrics.get('aggregate_rms', float('inf'))
     best_rms = best_metrics.get('aggregate_rms', float('inf'))
-    
-    # Failure feedback with curriculum hints based on iteration
-    failure_hint = ""
-    if previous_summary and "REJECTED" in previous_summary:
-        if "np.math.factorial" in previous_summary:
-            failure_hint = " | HINT: Use math.factorial (not np.math.factorial)"
-        elif "dimension" in previous_summary.lower() or "shape" in previous_summary.lower():
-            failure_hint = " | HINT: Use config.grid_shape for matrix dimensions"
-        elif "crash" in previous_summary.lower():
-            failure_hint = " | HINT: Keep code simple, avoid complex numpy operations"
-    
-    # Curriculum hint based on iteration (progressive complexity)
-    if iteration < 3:
-        curriculum_hint = "START SIMPLE: Just add overlap_count tracking + small scaling factor (0.997) to baseline"
+
+    # Ultra-simple strategy - no curriculum complexity
+    strategy = ""
+    if iteration == 0:
+        strategy = "STEP 1: Add ONLY 'z = z * 0.997' after z computation. Nothing else."
+    elif iteration == 1:
+        strategy = "STEP 2: Try 'z = z * 0.995' or '0.999'. Find optimal."
+    elif iteration == 2:
+        strategy = "STEP 3: Track overlap_count, apply different scale to overlapping pixels."
     elif iteration < 6:
-        curriculum_hint = "NEXT: Try computing overlap-based mean instead of global mean"
-    elif iteration < 10:
-        curriculum_hint = "ADVANCED: Try GLS for piston/tip/tilt estimation on overlaps"
+        strategy = f"STEP {iteration+1}: Try overlap-weighted mean or local averaging."
     else:
-        curriculum_hint = "EXPERT: Try Huber loss or Tikhonov regularization"
+        strategy = "Try any approach that reduces RMS. Keep it simple."
 
-    extended_notes = f"""{DOMAIN_NOTES}
+    # Error hints
+    error_hint = ""
+    if previous_summary:
+        if "REJECTED_CRASH" in previous_summary:
+            error_hint = "\n⚠️ PREVIOUS CRASHED - keep code minimal!"
+        elif "np.math" in previous_summary:
+            error_hint = "\n⚠️ Use math.factorial NOT np.math.factorial"
+        elif "copy=False" in previous_summary:
+            error_hint = "\n⚠️ Remove all copy=False from np.array()"
 
-## State: RMS={curr_rms:.6f} (best={best_rms:.6f}) | {scenario_breakdown}{failure_hint}
+    # Ultra-concise prompt - ~150 tokens
+    extended_notes = f"""# TASK: Reduce RMS on {scenario_ids or 'scenarios'}
 
-## Strategy (iter {iteration}): {curriculum_hint}
+## Current: RMS={curr_rms:.6f} | Best={best_rms:.6f}
+{scenario_breakdown}{error_hint}
 
-## Code Pattern (working baseline):
+## STRATEGY (iter {iteration}):
+{strategy}
+
+## TEMPLATE (copy this pattern):
 ```python
-for obs in observations:
-    cx, cy = obs.center_xy
-    top = int(round(cy - (obs.tile_shape[0] - 1) / 2.0))
-    left = int(round(cx - (obs.tile_shape[1] - 1) / 2.0))
-    gy_s, gy_e = max(0, top), min(global_shape[0], top + obs.tile_shape[0])
-    gx_s, gx_e = max(0, left), min(global_shape[1], left + obs.tile_shape[1])
-    if gy_e > gy_s and gx_e > gx_s:
-        local = obs.z[max(0,-top):, max(0,-left):]
-        sum_z[gy_s:gy_e, gx_s:gx_e][obs.valid_mask] += local[obs.valid_mask]
-        count[gy_s:gy_e, gx_s:gx_e][obs.valid_mask] += 1
-z = sum_z / np.maximum(count, 1)
+import numpy as np
+from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertureObservation
+
+class CandidateStitcher:
+    def reconstruct(self, observations, config):
+        obs_list = list(observations)
+        shape = obs_list[0].global_shape
+        sum_z = np.zeros(shape)
+        count = np.zeros(shape, dtype=int)
+        support = np.zeros(shape, dtype=bool)
+        
+        for obs in obs_list:
+            cx, cy = obs.center_xy
+            r, c = obs.tile_shape
+            top, left = int(round(cy - (r-1)/2)), int(round(cx - (c-1)/2))
+            gs = max(0, top); ge = min(shape[0], top+r)
+            ls = max(0, -top); le = ls + (ge-gs)
+            if ge > gs:
+                sum_z[gs:ge, max(0,left):min(shape[1],left+c)][obs.valid_mask] += obs.z[obs.valid_mask]
+                count[gs:ge, max(0,left):min(shape[1],left+c)][obs.valid_mask] += 1
+                support[gs:ge, max(0,left):min(shape[1],left+c)][obs.valid_mask] = True
+        
+        z = sum_z / np.maximum(count, 1)
+        # ADD YOUR IMPROVEMENT HERE
+        
+        return ReconstructionSurface(z=z, valid_mask=count>0, source_observation_ids=tuple(o.observation_id for o in obs_list), observed_support_mask=support)
 ```
-## Rules
-- Use numpy/scipy only (no loops on pixels)
-- Return ReconstructionSurface with observed_support_mask
+
+## RULES:
+- NO scipy, NO lstsq, NO matrix operations
+- NO copy=False in np.array()
+- One small change at a time
 - Keep class CandidateStitcher"""
 
     return ExperimentContext(
@@ -102,7 +114,7 @@ z = sum_z / np.maximum(count, 1)
         ),
         forbidden_paths=(
             "src/stitching/trusted/**",
-            "src/stitching/harness/**",
+            "src/stitching/harness**",
             "scenarios/**",
         ),
         scenario_ids=scenario_ids,

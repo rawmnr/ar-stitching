@@ -251,25 +251,22 @@ class OpenCodeCliBackend(AgentBackend):
 
     def _validate_code(self, code: str) -> str | None:
         """Validate Python code and apply automatic trivial fixes."""
+        # --- STRICT REJECTION BEFORE ANY FIXES ---
+        # Reject copy=False immediately - too problematic
+        if "copy=False" in code:
+            return "ERROR: Remove ALL 'copy=False' from np.array() calls. Use np.array(arr) instead."
+        
+        # Reject np.math - wrong module
+        if "np.math" in code:
+            return "ERROR: Use 'math.factorial' not 'np.math.factorial'"
+        
         # --- AUTOMATIC FIXES ---
-        # Fix np.math.factorial -> math.factorial
+        # Fix np.math.factorial -> math.factorial (if somehow got through)
         if "np.math.factorial" in code:
             logger.info("Auto-fixing np.math.factorial -> math.factorial")
             code = code.replace("np.math.factorial", "math.factorial")
             if "import math" not in code:
                 code = "import math\n" + code
-        
-        # Fix numpy array copy warnings
-        if "np.array(obs.z, copy=False)" in code and "np.array(obs.valid_mask, copy=False)" in code:
-            code = code.replace("np.array(obs.z, copy=False)", "np.array(obs.z)")
-            code = code.replace("np.array(obs.valid_mask, copy=False)", "np.array(obs.valid_mask)")
-            logger.info("Auto-fixing copy=False to avoid array copy issues")
-        
-        # Fix common dimension issues - ensure global_shape is used
-        if "global_shape" not in code:
-            # Try to add global_shape declaration if missing
-            if "def reconstruct" in code and "global_shape = " not in code:
-                pass  # Don't auto-add, warn instead
         
         # Check for required class using regex for flexibility
         if not re.search(self.REQUIRED_CLASS_PATTERN, code):
