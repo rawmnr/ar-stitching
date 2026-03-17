@@ -38,14 +38,14 @@ class OpenCodeCliBackend(AgentBackend):
         repo_root: Path,
         provider: str = "llama-swap",
         model: str = "devstral-standard",
-        agentic_timeout_sec: float = 240.0,
+        timeout_sec: float = 240.0,
         title: str = "autoresearch",
         **kwargs,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.provider = provider
         self.model = model
-        self.agentic_timeout_sec = agentic_timeout_sec
+        self.timeout_sec = timeout_sec
         self.title = title
         self._task_file_path = self.repo_root / ".opencode_task.md"
 
@@ -166,7 +166,7 @@ class OpenCodeCliBackend(AgentBackend):
                     time.sleep(self.RETRY_DELAY_SEC)
                     
             except subprocess.TimeoutExpired:
-                last_error = f"Timeout after {self.agentic_timeout_sec}s"
+                last_error = f"Timeout after {self.timeout_sec}s"
                 logger.warning("Attempt %d: %s", attempt + 1, last_error)
             except Exception as exc:
                 last_error = str(exc)
@@ -223,7 +223,7 @@ class OpenCodeCliBackend(AgentBackend):
             capture_output=True,
             text=True,
             encoding="utf-8",
-            timeout=self.agentic_timeout_sec,
+            timeout=self.timeout_sec,
             shell=is_windows,
             env=env,
         )

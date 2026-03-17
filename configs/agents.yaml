@@ -18,22 +18,22 @@ backends:
   opencode_gpt_oss:
     provider: llama-swap
     model: gpt-oss-prod
-    timeout_sec: 240
+    timeout_sec: 500
 
   opencode-devstral:
     provider: llama-swap
     model: devstral-standard
-    timeout_sec: 240
+    timeout_sec: 500
 
   opencode_local:
     provider: llama-swap
     model: qwen3-coder
-    timeout_sec: 180
+    timeout_sec: 500
 
   opencode_qwen3:
     provider: openrouter
     model: qwen/qwen3-coder-30b-a3b-instruct
-    timeout_sec: 240
+    timeout_sec: 500
 
 default_backend: codex
 fallback_backend: opencode_gpt_oss

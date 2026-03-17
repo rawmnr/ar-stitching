@@ -131,8 +131,9 @@ class AutoresearchLoop:
                         result.metrics["aggregate_rms"],
                     )
                 else:
+                    error_info = f" | Errors: {', '.join(result.notes)}" if result.notes else ""
                     self._previous_summary = (
-                        f"REJECTED ({result.verdict.value}): {result.hypothesis}"
+                        f"REJECTED ({result.verdict.value}): {result.hypothesis}{error_info}"
                     )
                     logger.info("✗ REJECTED — reason: %s", result.verdict.value)
 
@@ -240,9 +241,10 @@ class AutoresearchLoop:
             )
         except Exception as exc:
             self._restore_candidate(candidate_path, backup_source)
+            full_error = f"{type(exc).__name__}: {str(exc)}\n{traceback.format_exc()}"
             return self._build_failure_result(
                 manifest, RunVerdict.REJECTED_CRASH,
-                current_metrics, str(exc), budget_tracker.elapsed,
+                current_metrics, full_error, budget_tracker.elapsed,
                 hypothesis=proposal.hypothesis, diff=proposal.diff,
             )
 
