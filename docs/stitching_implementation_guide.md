@@ -29,7 +29,10 @@ where $\text{model}_i(\mathbf{r}) = p_i + tx_i x + ty_i y + f_i (x^2+y^2)$.
 4. **Weighted Least Squares**: Solve $(A^T W A) \mathbf{x} = A^T W b$.
    - Use `scipy.sparse.linalg.lsqr` for efficiency.
    - **Crucial**: Fix one sub-aperture (e.g., $p_0=0, tx_0=0, ty_0=0, f_0=0$) to remove the global rank deficiency (singular matrix).
-5. **Reconstruction**: Apply the estimated parameters to correct each observation:
+5. **Regularization (Damping)**: To prevent over-fitting (e.g., estimating focus where none exists), use the `damp` parameter in `lsqr`. 
+   - A value of `1e-4` to `1e-2` forces parameters toward zero if they don't improve the residuals significantly.
+   - Equation solved: $(A^T A + \lambda I) \mathbf{x} = A^T b$.
+6. **Reconstruction**: Apply the estimated parameters to correct each observation:
    $S_i^{\text{corrected}} = S_i - \text{model}_i(\hat{\mathbf{x}})$
    Then perform a simple mean or weighted average of the corrected observations.
 

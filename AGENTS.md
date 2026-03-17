@@ -5,11 +5,13 @@ Optimiser itérativement l'algorithme de stitching optique dans
 `src/stitching/editable/candidate_current.py` en minimisant l'erreur RMS
 agrégée sur la suite de scénarios.
 
-**IMPÉRATIF ARCHITECTURAL** : L'algorithme DOIT implémenter une correction
-conjointe des erreurs d'alignement (Piston, Tip, Tilt, Focus) par **Moindres
-Carrés (GLS/WLS)** sur les zones de recouvrement. Une simple moyenne (mean)
-est insuffisante pour les scénarios avec `alignment_term`. Voir `docs/stitching_implementation_guide.md`
-pour les détails mathématiques.
+**ÉTAT ACTUEL** : Une structure de solveur global (Piston uniquement) a été
+pré-implémentée dans `candidate_current.py`.
+
+**PROCHAINE ÉTAPE (PRIORITÉ)** : Étendre le solveur `_solve_global_alignment` pour
+estimer également le **Tip, Tilt et Focus** (indices 1, 2, 3 du vecteur d'état
+par sous-pupille). Voir `docs/stitching_implementation_guide.md` pour
+le modèle mathématique complet.
 
 ## Chemins éditables (SEULS fichiers modifiables)
 - `src/stitching/editable/candidate_current.py`
@@ -50,6 +52,7 @@ pour les détails mathématiques.
    une phrase.
 6. **Vectorisation** : privilégier NumPy/SciPy vectorisé + `scipy.sparse`.
    Pas de boucles Python sur les pixels.
+7. **Prudence de Modélisation (Anti-Overfit)** : Ne pas corriger de termes (Focus, Astigmatisme...) s'ils ne sont pas nécessaires. Utiliser la **régularisation de Tikhonov** pour maintenir les paramètres d'alignement à zéro par défaut en l'absence de signal clair dans les overlaps.
 
 ## Vecteurs de recherche recommandés (par priorité)
 1. **Solveur Global (Mandat)** : Résolution simultanée des vecteurs d'état
