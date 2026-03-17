@@ -5,12 +5,12 @@ tile_shape: [128, 128]
 pixel_size: 1.0
 pattern_type: annular
 overlap_fraction: 0.3
-annular_rings: 3
+annular_rings: 2
 baseline_name: mean
 seed: 17
 gaussian_noise_std: 0.03
 outlier_fraction: 0.0005
-reference_bias: 0.005
+reference_bias: 1
 retrace_error: 0.005
 metadata:
   truth_basis: zernike
@@ -32,7 +32,7 @@ metadata:
   reference_bias_drift_step: 0.002
   reference_bias_coefficients: [
     0.0, 0.05, -0.03,  # Z1-Z3 (Piston, Tip, Tilt)
-    0.12, 0.02, -0.04, # Z4-Z6 (Defocus, Astig x2)
+    0.12, 0.4, -0.2, # Z4-Z6 (Defocus, Astig x2)
     0.015, -0.01, 0.008, 0.005, # Z7-Z10 (Coma x2, Trefoil x2)
     0.003, -0.002, 0.004, 0.001, 0.002, # Z11-Z15
     0.001, -0.001, 0.001, 0.001, 0.001, 0.001, # Z16-Z21
