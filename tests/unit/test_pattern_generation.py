@@ -37,13 +37,17 @@ def test_annular_pattern_generation() -> None:
     from stitching.trusted.scan.generation import generate_annular_scan_plan
     grid_shape = (100, 100)
     tile_shape = (20, 20)
+    metadata = {
+        "truth_pupil": "circular", 
+        "truth_radius_fraction": 0.45,
+        "detector_pupil": "circular",
+        "detector_radius_fraction": 0.48
+    }
     
-    offsets = generate_annular_scan_plan(grid_shape, tile_shape, overlap_fraction=0.2, num_rings=1)
+    # Use num_rings=None to let it auto-calculate enough rings
+    offsets = generate_annular_scan_plan(grid_shape, tile_shape, overlap_fraction=0.2, num_rings=None, metadata=metadata)
     
-    # Ring 1 radius should be (100-20)/2 = 40.
-    # Circumference 2*pi*40 = 251
-    # Step 20 * 0.8 = 16
-    # Tiles ~ 251/16 = 15.7 -> 16 tiles + 1 center = 17 tiles.
+    # We expect 1 (center) + several rings.
     assert len(offsets) >= 10
     assert (0.0, 0.0) in offsets
 

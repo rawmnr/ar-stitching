@@ -131,10 +131,12 @@ class ScenarioConfig:
             seed = int(payload.get("seed", 0))
             
             if p_type == "grid":
-                offsets = generate_grid_scan_plan(grid_shape, tile_shape, overlap, seed)
+                offsets = generate_grid_scan_plan(grid_shape, tile_shape, overlap, seed, metadata=payload.get("metadata", {}))
             elif p_type == "annular":
-                num_rings = int(payload.get("annular_rings", 2))
-                offsets = generate_annular_scan_plan(grid_shape, tile_shape, overlap, num_rings, seed)
+                num_rings = payload.get("annular_rings")
+                if num_rings is not None:
+                    num_rings = int(num_rings)
+                offsets = generate_annular_scan_plan(grid_shape, tile_shape, overlap, num_rings, seed, metadata=payload.get("metadata", {}))
             else:
                 raise ValueError(f"Unsupported pattern_type '{p_type}'.")
             
