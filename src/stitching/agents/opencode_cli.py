@@ -250,7 +250,27 @@ class OpenCodeCliBackend(AgentBackend):
         return stdout, stderr, result.returncode
 
     def _validate_code(self, code: str) -> str | None:
-        """Validate Python code. Returns error message or None if valid."""
+        """Validate Python code and apply automatic trivial fixes."""
+        # --- AUTOMATIC FIXES ---
+        # Fix np.math.factorial -> math.factorial
+        if "np.math.factorial" in code:
+            logger.info("Auto-fixing np.math.factorial -> math.factorial")
+            code = code.replace("np.math.factorial", "math.factorial")
+            if "import math" not in code:
+                code = "import math\n" + code
+        
+        # Fix numpy array copy warnings
+        if "np.array(obs.z, copy=False)" in code and "np.array(obs.valid_mask, copy=False)" in code:
+            code = code.replace("np.array(obs.z, copy=False)", "np.array(obs.z)")
+            code = code.replace("np.array(obs.valid_mask, copy=False)", "np.array(obs.valid_mask)")
+            logger.info("Auto-fixing copy=False to avoid array copy issues")
+        
+        # Fix common dimension issues - ensure global_shape is used
+        if "global_shape" not in code:
+            # Try to add global_shape declaration if missing
+            if "def reconstruct" in code and "global_shape = " not in code:
+                pass  # Don't auto-add, warn instead
+        
         # Check for required class using regex for flexibility
         if not re.search(self.REQUIRED_CLASS_PATTERN, code):
             return "Missing required class: CandidateStitcher"
@@ -267,15 +287,10 @@ class OpenCodeCliBackend(AgentBackend):
         except Exception as exc:
             return f"Parsing error: {exc}"
         
-        # Check for common mistakes - slightly more specific to avoid false positives
+        # Check for common mistakes
         if "from stitching.trusted.eval.metrics import" in code:
             return "Forbidden import from stitching.trusted.eval.metrics (use contracts instead)"
 
-        # Check for undefined names (basic check)
-        # We only check for names that are likely to be used but forgotten
-        # Like np, sparse, lsqr, global_shape etc.
-        # This is a bit complex to do perfectly without full static analysis,
-        # but we can do a simple check for 'np.' if 'import numpy as np' is missing.
         if "np." in code and "import numpy as np" not in code and "import numpy" not in code:
             return "Missing 'import numpy as np'"
         
@@ -289,16 +304,12 @@ class OpenCodeCliBackend(AgentBackend):
         """Build a SHORT CLI prompt that references the task file."""
         current_rms = ctx.current_metrics.get("aggregate_rms", "N/A")
 
-        # Fix typos: urgency / attempt
-        urgency_label = ["", "URGENT: ", "FINAL ATTEMPT: "][min(attempt, 2)]
+        # Urgency based on attempt
+        urgency = ["", "URGENT: ", "FINAL: "][min(attempt, 2)]
 
         prompt = (
-            f"{urgency_label}Read .opencode_task.md for full instructions. "
-            f"Current RMS={current_rms}. "
-            f"Edit src/stitching/editable/candidate_current.py to reduce RMS. "
-            f"HINT: Try estimating Zernike instrument bias coefficients (Z1-Z36) simultaneously with the surface. "
-            f"CRITICAL: Do not hardcode dimensions. "
-            f"Use write_file tool NOW. Do not explain, just edit the file."
+            f"{urgency}RMS={current_rms:.6f}. Read .opencode_task.md. "
+            f"Edit candidate_current.py. Use write_file NOW."
         )
 
         return prompt

@@ -120,6 +120,7 @@ class AutoresearchLoop:
                         best_path.parent.mkdir(parents=True, exist_ok=True)
                         
                         # Re-read full source from disk (it was already committed/applied)
+                        candidate_path = self.repo_root / self.candidate_rel_path
                         full_source = candidate_path.read_text(encoding="utf-8")
                         best_path.write_text(full_source, encoding="utf-8")
                         logger.info("New best candidate saved to %s", best_path)
@@ -149,18 +150,29 @@ class AutoresearchLoop:
         budget_tracker.start()
         base_commit = self.git.current_commit()
         candidate_path = self.repo_root / self.candidate_rel_path
+        baseline_path = self.repo_root / "src/stitching/editable/candidate_baseline.py"
 
-        # ──────────────────────────────────────────────────────
-        # FIX 1: backup BEFORE calling the agent
-        # ──────────────────────────────────────────────────────
-        backup_source = (
-            candidate_path.read_text(encoding="utf-8")
-            if candidate_path.exists()
-            else ""
-        )
+        # 1. Evaluate current baseline (with fallback)
+        try:
+            current_metrics, current_reports = self._evaluate_current(candidate_path)
+        except Exception:
+            logger.warning("Current candidate corrupted, falling back to baseline.py")
+            if baseline_path.exists():
+                candidate_path.write_text(baseline_path.read_text(encoding="utf-8"), encoding="utf-8")
+                current_metrics, current_reports = self._evaluate_current(candidate_path)
+            else:
+                current_metrics = {"aggregate_rms": float("inf"), "num_scenarios": 0}
+                current_reports = ()
 
-        # 1. Evaluate current baseline
-        current_metrics = self._evaluate_current(candidate_path)
+        backup_source = candidate_path.read_text(encoding="utf-8")
+
+        # 2. Build per-scenario breakdown for better feedback
+        scenario_results = {}
+        for r in current_reports:
+            scenario_results[r.scenario_id] = {
+                "rms": r.signal_metrics.get("rms_on_valid_intersection", float("inf")),
+                    "accepted": r.accepted,
+                }
 
         # 2. Build context
         context = build_experiment_context(
@@ -173,6 +185,7 @@ class AutoresearchLoop:
             previous_summary=self._previous_summary,
             scenario_ids=tuple(p.stem for p in self.scenario_paths),
             time_budget_sec=self.budget.eval_time_sec,
+            scenario_results=scenario_results,
         )
 
         manifest = RunManifest(
@@ -196,52 +209,41 @@ class AutoresearchLoop:
                 current_metrics, str(exc), budget_tracker.elapsed,
             )
 
-        # ──────────────────────────────────────────────────────
-        # FIX 2: apply the patch to disk
-        # ──────────────────────────────────────────────────────
+        # 4. Apply and Validate Patch
         try:
             self._apply_patch(candidate_path, backup_source, proposal)
-        except _PatchEmpty:
-            self._restore_candidate(candidate_path, backup_source)
-            return self._build_failure_result(
-                manifest, RunVerdict.REJECTED_EMPTY,
-                current_metrics, "Agent produced no code changes.",
-                budget_tracker.elapsed, hypothesis=proposal.hypothesis,
-            )
-        except _PatchSyntaxError as exc:
-            self._restore_candidate(candidate_path, backup_source)
-            return self._build_failure_result(
-                manifest, RunVerdict.REJECTED_SYNTAX,
-                current_metrics, str(exc), budget_tracker.elapsed,
-                hypothesis=proposal.hypothesis,
-                diff=proposal.diff,
-            )
-
-        # 4. Evaluate the patched candidate
-        try:
             budget_tracker.check()
             new_metrics, reports = evaluate_candidate_on_suite(
                 load_candidate_module(candidate_path),
                 self.scenario_paths,
                 eval_budget_sec=self.budget.eval_time_sec,
             )
-        except BudgetExceededError:
-            self._restore_candidate(candidate_path, backup_source)
-            return self._build_failure_result(
-                manifest, RunVerdict.REJECTED_TIMEOUT,
-                current_metrics, "Evaluation timeout", budget_tracker.elapsed,
-                hypothesis=proposal.hypothesis, diff=proposal.diff,
-            )
-        except GuardrailViolation as exc:
-            self._restore_candidate(candidate_path, backup_source)
-            return self._build_failure_result(
-                manifest, RunVerdict.REJECTED_GUARDRAIL,
-                current_metrics, str(exc), budget_tracker.elapsed,
-                hypothesis=proposal.hypothesis, diff=proposal.diff,
-            )
         except Exception as exc:
             self._restore_candidate(candidate_path, backup_source)
-            full_error = f"{type(exc).__name__}: {str(exc)}\n{traceback.format_exc()}"
+            
+            # ENHANCED ERROR REPORTING
+            error_type = type(exc).__name__
+            error_msg = str(exc)
+            tb = traceback.extract_tb(exc.__traceback__)
+            
+            # Find the first frame that points to our candidate file
+            relevant_tb = [f for f in tb if "candidate_current.py" in f.filename]
+            error_context = ""
+            if relevant_tb:
+                line_no = relevant_tb[-1].lineno
+                error_context = f"\nCRASH at line {line_no} in candidate_current.py\n"
+                # Add a small snippet around the error
+                lines = backup_source.splitlines() # or the failed new source
+                if proposal.full_source:
+                    lines = proposal.full_source.splitlines()
+                
+                start = max(0, line_no - 5)
+                end = min(len(lines), line_no + 5)
+                snippet = "\n".join([f"{i+1:4d}: {l}" for i, l in enumerate(lines[start:end])])
+                error_context += f"```python\n{snippet}\n```"
+
+            full_error = f"{error_type}: {error_msg}\n{error_context}\n{traceback.format_exc()}"
+            
             return self._build_failure_result(
                 manifest, RunVerdict.REJECTED_CRASH,
                 current_metrics, full_error, budget_tracker.elapsed,
@@ -340,16 +342,16 @@ class AutoresearchLoop:
 
     # ──────────────────────────────────────────────────────────
 
-    def _evaluate_current(self, candidate_path: Path) -> dict[str, float]:
+    def _evaluate_current(self, candidate_path: Path) -> tuple[dict[str, float], tuple]:
         try:
             candidate = load_candidate_module(candidate_path)
-            metrics, _ = evaluate_candidate_on_suite(
+            metrics, reports = evaluate_candidate_on_suite(
                 candidate, self.scenario_paths, self.budget.eval_time_sec,
             )
-            return metrics
+            return metrics, reports
         except Exception as exc:
             logger.warning("Baseline evaluation failed: %s", exc)
-            return {"aggregate_rms": float("inf"), "num_scenarios": 0}
+            return {"aggregate_rms": float("inf"), "num_scenarios": 0}, ()
 
     def _is_improvement(
         self, current: dict[str, float], proposed: dict[str, float],
