@@ -104,6 +104,28 @@ def _scenario_nuisance_terms(config: ScenarioConfig, index: int) -> dict[str, fl
         if key in metadata:
             terms[key] = float(metadata[key])
 
+    # Robustness evaluation alignment terms (Random per sub-aperture)
+    # alignment_term: list of indices (0: Piston, 1: Tip, 2: Tilt, 3: Focus)
+    # alignment_random_coeff: magnitude of the random variation (standard deviation)
+    if "alignment_term" in metadata:
+        term_indices = metadata["alignment_term"]
+        if isinstance(term_indices, (int, float)):
+            term_indices = [int(term_indices)]
+            
+        coeff = float(metadata.get("alignment_random_coeff", 1.0))
+        
+        # Mapping: 0=Piston, 1=Tip, 2=Tilt, 3=Focus
+        mapping = ["subaperture_dc", "subaperture_tip", "subaperture_tilt", "subaperture_focus"]
+        
+        for i in term_indices:
+            idx = int(i)
+            if idx < len(mapping):
+                key = mapping[idx]
+                # Unique deterministic seed per observation and term index
+                rng = np.random.default_rng(config.seed + index + 70_000 + idx * 100)
+                val = rng.normal(0.0, coeff)
+                terms[key] = terms.get(key, 0.0) + val
+
     return terms
 
 

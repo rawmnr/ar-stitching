@@ -33,18 +33,20 @@ def build_experiment_context(
     curr_rms = current_metrics.get('aggregate_rms', float('inf'))
     best_rms = best_metrics.get('aggregate_rms', float('inf'))
 
-    # Ultra-simple strategy - no curriculum complexity
+    # Ultra-simple strategy - ONE tiny change at a time
     strategy = ""
     if iteration == 0:
-        strategy = "STEP 1: Add ONLY 'z = z * 0.997' after z computation. Nothing else."
+        strategy = "TINY CHANGE 1: Add z = z * 0.997 AFTER the line 'z = sum_z / np.maximum(count, 1)'. Do NOT change anything else."
     elif iteration == 1:
-        strategy = "STEP 2: Try 'z = z * 0.995' or '0.999'. Find optimal."
+        strategy = "TINY CHANGE 2: Replace 0.997 with 0.995. If that made RMS worse, try 0.999."
     elif iteration == 2:
-        strategy = "STEP 3: Track overlap_count, apply different scale to overlapping pixels."
-    elif iteration < 6:
-        strategy = f"STEP {iteration+1}: Try overlap-weighted mean or local averaging."
+        strategy = "TINY CHANGE 3: Keep overlap_count tracking from baseline, only change the scaling factor."
+    elif iteration == 3:
+        strategy = "TINY CHANGE 4: Try 'z[overlap_count>1] *= 0.99' to scale ONLY overlapping pixels."
+    elif iteration < 8:
+        strategy = f"MINIMAL CHANGE: Adjust the scale factor slightly (try 0.990 to 1.000 range)."
     else:
-        strategy = "Try any approach that reduces RMS. Keep it simple."
+        strategy = "Any tiny improvement. Keep it under 5 lines of code."
 
     # Error hints
     error_hint = ""
@@ -90,7 +92,8 @@ class CandidateStitcher:
                 support[gs:ge, max(0,left):min(shape[1],left+c)][obs.valid_mask] = True
         
         z = sum_z / np.maximum(count, 1)
-        # ADD YOUR IMPROVEMENT HERE
+        
+        # === PASTE YOUR 1-LINE CHANGE HERE (e.g., z = z * 0.997) ===
         
         return ReconstructionSurface(z=z, valid_mask=count>0, source_observation_ids=tuple(o.observation_id for o in obs_list), observed_support_mask=support)
 ```

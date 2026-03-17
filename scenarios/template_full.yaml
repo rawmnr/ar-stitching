@@ -112,6 +112,13 @@ subaperture_dc_step: 0.05 # Slowly varying piston drift
 subaperture_tip: 0.1
 subaperture_tilt: -0.05
 
+# Robustness evaluation: Random alignment terms per sub-aperture
+# alignment_term: Indices of terms to randomize
+# (0: Piston/DC, 1: Tip/Y-gradient, 2: Tilt/X-gradient, 3: Focus/Power)
+# alignment_random_coeff: Standard deviation of the random variation
+alignment_term: [0, 1, 2]
+alignment_random_coeff: 10.0
+
 # ------------------------------------------------------------------------------
 # 6. Evaluation Policy
 # ------------------------------------------------------------------------------

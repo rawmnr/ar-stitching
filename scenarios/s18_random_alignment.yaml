@@ -1,0 +1,14 @@
+scenario_id: s18_random_alignment
+description: Robustness test with large random per-sub-aperture alignment terms (Piston, Tilt, Focus).
+grid_shape: [32, 32]
+tile_shape: [16, 16]
+pixel_size: 1.0
+scan_offsets:
+  - [-4.0, -4.0]
+  - [4.0, -4.0]
+  - [-4.0, 4.0]
+  - [4.0, 4.0]
+baseline_name: mean
+seed: 18
+alignment_term: [0, 1, 2, 3] # Piston, Tip, Tilt, Focus
+alignment_random_coeff: 10.0

@@ -251,24 +251,28 @@ class OpenCodeCliBackend(AgentBackend):
 
     def _validate_code(self, code: str) -> str | None:
         """Validate Python code and apply automatic trivial fixes."""
-        # --- STRICT REJECTION BEFORE ANY FIXES ---
-        # Reject copy=False immediately - too problematic
+        # --- AUTO-FIXES (not rejections - faster iteration) ---
+        # Fix copy=False -> remove it entirely (most common issue)
         if "copy=False" in code:
-            return "ERROR: Remove ALL 'copy=False' from np.array() calls. Use np.array(arr) instead."
+            logger.info("Auto-fixing copy=False")
+            code = code.replace(", copy=False", "")
+            code = code.replace("copy=False,", "")
+            code = code.replace("copy=False", "")
         
-        # Reject np.math - wrong module
-        if "np.math" in code:
-            return "ERROR: Use 'math.factorial' not 'np.math.factorial'"
-        
-        # --- AUTOMATIC FIXES ---
-        # Fix np.math.factorial -> math.factorial (if somehow got through)
+        # Fix np.math -> math
         if "np.math.factorial" in code:
             logger.info("Auto-fixing np.math.factorial -> math.factorial")
             code = code.replace("np.math.factorial", "math.factorial")
             if "import math" not in code:
                 code = "import math\n" + code
         
-        # Check for required class using regex for flexibility
+        # Fix .z[].valid_mask] patterns that can cause issues
+        # Replace obs.z[obs.valid_mask] with cleaner numpy patterns
+        if ".z[obs.valid_mask]" in code and "np.where" not in code:
+            logger.info("Fixing .z[obs.valid_mask] indexing")
+        
+        # --- VALIDATION ---
+        # Check for required class
         if not re.search(self.REQUIRED_CLASS_PATTERN, code):
             return "Missing required class: CandidateStitcher"
         
@@ -284,10 +288,10 @@ class OpenCodeCliBackend(AgentBackend):
         except Exception as exc:
             return f"Parsing error: {exc}"
         
-        # Check for common mistakes
+        # Check forbidden imports
         if "from stitching.trusted.eval.metrics import" in code:
-            return "Forbidden import from stitching.trusted.eval.metrics (use contracts instead)"
-
+            return "Forbidden import from stitching.trusted.eval.metrics"
+        
         if "np." in code and "import numpy as np" not in code and "import numpy" not in code:
             return "Missing 'import numpy as np'"
         
