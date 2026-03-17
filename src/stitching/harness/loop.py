@@ -174,7 +174,7 @@ class AutoresearchLoop:
                     "accepted": r.accepted,
                 }
 
-        # 2. Build context
+        # 3. Build context
         context = build_experiment_context(
             experiment_id=self.experiment_id,
             iteration=iteration,
@@ -200,90 +200,104 @@ class AutoresearchLoop:
             seed=iteration,
         )
 
-        # 3. Ask agent for a patch
-        try:
-            proposal = self.backend.propose_patch(context)
-        except Exception as exc:
-            return self._build_failure_result(
-                manifest, RunVerdict.REJECTED_CRASH,
-                current_metrics, str(exc), budget_tracker.elapsed,
-            )
+        last_error = ""
+        last_diff = ""
+        last_hypothesis = ""
+        last_reports = ()
 
-        # 4. Apply and Validate Patch
-        try:
-            self._apply_patch(candidate_path, backup_source, proposal)
-            budget_tracker.check()
-            new_metrics, reports = evaluate_candidate_on_suite(
-                load_candidate_module(candidate_path),
-                self.scenario_paths,
-                eval_budget_sec=self.budget.eval_time_sec,
-            )
-        except Exception as exc:
-            self._restore_candidate(candidate_path, backup_source)
-            
-            # ENHANCED ERROR REPORTING
-            error_type = type(exc).__name__
-            error_msg = str(exc)
-            tb = traceback.extract_tb(exc.__traceback__)
-            
-            # Find the first frame that points to our candidate file
-            relevant_tb = [f for f in tb if "candidate_current.py" in f.filename]
-            error_context = ""
-            if relevant_tb:
-                line_no = relevant_tb[-1].lineno
-                error_context = f"\nCRASH at line {line_no} in candidate_current.py\n"
-                # Add a small snippet around the error
-                lines = backup_source.splitlines() # or the failed new source
-                if proposal.full_source:
-                    lines = proposal.full_source.splitlines()
+        # 4. Agentic Loop (Retries for logical errors/crashes)
+        for attempt in range(self.budget.max_attempts_per_iteration):
+            if attempt > 0:
+                logger.info("Retrying iteration %d (Attempt %d/%d) due to evaluation failure", 
+                            iteration, attempt + 1, self.budget.max_attempts_per_iteration)
+                # Update context with the error from previous attempt
+                context.previous_summary = f"REJECTED_CRASH (Attempt {attempt}): {last_error[:200]}"
+
+            # 4a. Ask agent for a patch
+            try:
+                proposal = self.backend.propose_patch(context)
+                last_hypothesis = proposal.hypothesis
+                last_diff = proposal.diff
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+
+            # 4b. Apply and Validate Patch
+            try:
+                self._apply_patch(candidate_path, backup_source, proposal)
+                budget_tracker.check()
+                new_metrics, reports = evaluate_candidate_on_suite(
+                    load_candidate_module(candidate_path),
+                    self.scenario_paths,
+                    eval_budget_sec=self.budget.eval_time_sec,
+                )
                 
-                start = max(0, line_no - 5)
-                end = min(len(lines), line_no + 5)
-                snippet = "\n".join([f"{i+1:4d}: {l}" for i, l in enumerate(lines[start:end])])
-                error_context += f"```python\n{snippet}\n```"
+                # If we reached here, evaluation SUCCEEDED (no crash)
+                # 5. Accept / reject
+                diff_patch = self.git.diff_against(base_commit, [self.candidate_rel_path])
+                improved = self._is_improvement(current_metrics, new_metrics)
 
-            full_error = f"{error_type}: {error_msg}\n{error_context}\n{traceback.format_exc()}"
-            
-            return self._build_failure_result(
-                manifest, RunVerdict.REJECTED_CRASH,
-                current_metrics, full_error, budget_tracker.elapsed,
-                hypothesis=proposal.hypothesis, diff=proposal.diff,
-            )
+                if improved:
+                    commit_msg = (
+                        f"autoresearch: iter={iteration} "
+                        f"rms={new_metrics['aggregate_rms']:.8f}\n\n"
+                        f"Hypothesis: {proposal.hypothesis}\n"
+                        f"Agent: {self.backend.name}"
+                    )
+                    self.git.stage_and_commit([self.candidate_rel_path], commit_msg)
+                    verdict = RunVerdict.ACCEPTED
+                    final_metrics = new_metrics
+                    final_reports = reports
+                else:
+                    self._restore_candidate(candidate_path, backup_source)
+                    verdict = RunVerdict.REJECTED_REGRESSION
+                    final_metrics = current_metrics
+                    final_reports = reports
 
-        # 5. Accept / reject
-        diff_patch = self.git.diff_against(base_commit, [self.candidate_rel_path])
-        improved = self._is_improvement(current_metrics, new_metrics)
+                return RunResult(
+                    manifest=manifest,
+                    verdict=verdict,
+                    metrics=final_metrics,
+                    eval_reports=final_reports,
+                    hypothesis=proposal.hypothesis,
+                    diff_patch=diff_patch,
+                    elapsed_sec=budget_tracker.elapsed,
+                    notes=tuple(
+                        f"{r.scenario_id}: "
+                        f"rms={r.signal_metrics['rms_on_valid_intersection']:.6f}"
+                        for r in final_reports
+                    ),
+                )
 
-        if improved:
-            commit_msg = (
-                f"autoresearch: iter={iteration} "
-                f"rms={new_metrics['aggregate_rms']:.8f}\n\n"
-                f"Hypothesis: {proposal.hypothesis}\n"
-                f"Agent: {self.backend.name}"
-            )
-            self.git.stage_and_commit([self.candidate_rel_path], commit_msg)
-            verdict = RunVerdict.ACCEPTED
-            final_metrics = new_metrics
-            final_reports = reports
-        else:
-            self._restore_candidate(candidate_path, backup_source)
-            verdict = RunVerdict.REJECTED_REGRESSION
-            final_metrics = current_metrics
-            final_reports = reports
+            except Exception as exc:
+                self._restore_candidate(candidate_path, backup_source)
+                
+                # ENHANCED ERROR REPORTING
+                error_type = type(exc).__name__
+                error_msg = str(exc)
+                tb = traceback.extract_tb(exc.__traceback__)
+                
+                relevant_tb = [f for f in tb if "candidate_current.py" in f.filename]
+                error_context = ""
+                if relevant_tb:
+                    line_no = relevant_tb[-1].lineno
+                    error_context = f"\nCRASH at line {line_no} in candidate_current.py\n"
+                    lines = proposal.full_source.splitlines() if proposal.full_source else []
+                    if lines:
+                        start = max(0, line_no - 5)
+                        end = min(len(lines), line_no + 5)
+                        snippet = "\n".join([f"{i+1:4d}: {l}" for i, l in enumerate(lines[start:end])])
+                        error_context += f"```python\n{snippet}\n```"
 
-        return RunResult(
-            manifest=manifest,
-            verdict=verdict,
-            metrics=final_metrics,
-            eval_reports=final_reports,
-            hypothesis=proposal.hypothesis,
-            diff_patch=diff_patch,
-            elapsed_sec=budget_tracker.elapsed,
-            notes=tuple(
-                f"{r.scenario_id}: "
-                f"rms={r.signal_metrics['rms_on_valid_intersection']:.6f}"
-                for r in final_reports
-            ),
+                last_error = f"{error_type}: {error_msg}\n{error_context}"
+                logger.warning("Attempt %d failed: %s", attempt + 1, error_msg)
+                continue
+
+        # If all attempts exhausted
+        return self._build_failure_result(
+            manifest, RunVerdict.REJECTED_CRASH,
+            current_metrics, last_error, budget_tracker.elapsed,
+            hypothesis=last_hypothesis, diff=last_diff,
         )
 
     # ──────────────────────────────────────────────────────────

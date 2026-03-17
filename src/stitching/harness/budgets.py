@@ -22,6 +22,7 @@ class IterationBudget:
     total_time_sec: float = 480.0      # Total wall-clock budget
     max_memory_mb: float = 8192.0      # Peak memory cap
     max_candidate_lines: int = 2000    # Prevent bloated candidates
+    max_attempts_per_iteration: int = 1 # Number of agentic attempts before skipping iteration
 
 
 @contextmanager

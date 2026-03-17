@@ -5,6 +5,7 @@ default:
   total_time_sec: 480
   max_memory_mb: 8192
   max_candidate_lines: 2000
+  max_attempts_per_iteration: 3
 
 fast:
   agent_time_sec: 60
@@ -12,6 +13,7 @@ fast:
   total_time_sec: 200
   max_memory_mb: 4096
   max_candidate_lines: 1500
+  max_attempts_per_iteration: 2
 
 overnight:
   agent_time_sec: 300
@@ -19,3 +21,4 @@ overnight:
   total_time_sec: 960
   max_memory_mb: 16384
   max_candidate_lines: 3000
+  max_attempts_per_iteration: 5
