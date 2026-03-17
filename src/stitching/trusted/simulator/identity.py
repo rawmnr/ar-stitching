@@ -9,7 +9,7 @@ import numpy as np
 from stitching.contracts import ScenarioConfig, SubApertureObservation, SurfaceTruth
 from stitching.trusted.instrument.bias import (
     apply_reference_bias,
-    generate_instrument_zernike_bias,
+    generate_reference_bias_field,
     reference_bias_for_observation,
 )
 from stitching.trusted.noise.models import (
@@ -161,10 +161,10 @@ def simulate_identity_observations(
         else:
             drift_surface_max = None
 
-    # 4. Pre-calculate static instrument Zernike bias (detector frame)
-    inst_z_coeffs = config.metadata.get("instrument_zernike_bias")
-    if inst_z_coeffs is not None:
-        static_inst_bias = generate_instrument_zernike_bias(tile_shape, np.array(inst_z_coeffs, dtype=float))
+    # 4. Pre-calculate static instrument reference bias (detector frame)
+    ref_bias_coeffs = config.metadata.get("reference_bias_coefficients")
+    if ref_bias_coeffs is not None:
+        static_inst_bias = generate_reference_bias_field(tile_shape, np.array(ref_bias_coeffs, dtype=float))
     else:
         static_inst_bias = 0.0
 

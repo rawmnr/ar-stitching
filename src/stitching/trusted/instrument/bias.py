@@ -11,11 +11,11 @@ def stationary_reference_bias(shape: tuple[int, int], bias: float) -> np.ndarray
     return np.full(shape, bias, dtype=float)
 
 
-def generate_instrument_zernike_bias(
+def generate_reference_bias_field(
     shape: tuple[int, int],
     coefficients: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Generate a static instrument bias field from Zernike coefficients."""
+    """Generate a static field-dependent reference bias from Zernike coefficients."""
     if coefficients is None or len(coefficients) == 0:
         return np.zeros(shape, dtype=float)
     
