@@ -78,9 +78,9 @@ def main():
         fig.colorbar(im1, ax=axes[row_idx, 0])
         
         # Plot Difference
-        rms = report.signal_metrics.get('rms_on_valid_intersection', float('nan'))
+        rms = report.signal_metrics.get('rms_detrended', float('nan'))
         im2 = axes[row_idx, 1].imshow(z_diff, origin='lower', cmap='RdBu_r')
-        axes[row_idx, 1].set_title(f"{name} Error (Diff to GT)\nRMS: {rms:.6f}")
+        axes[row_idx, 1].set_title(f"{name} Error (Diff to GT)\nRMS_detrend: {rms:.6f}")
         fig.colorbar(im2, ax=axes[row_idx, 1])
         
         # Plot mask/support (optional but useful for s17)
