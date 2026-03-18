@@ -1,4 +1,4 @@
-"""SIAC with Joint Pose Optimization - Simplified version."""
+"""SIAC with Robust Sub-Pixel Registration."""
 from __future__ import annotations
 
 import numpy as np
@@ -13,40 +13,120 @@ EDGE_EROSION_PX = 2
 FEATHER_WIDTH = 0.20
 SIGMA_FILTER = 0.7
 
+MAX_EXPECTED_SHIFT_PX = 1.0
+MIN_CORRELATION_PEAK = 0.08
 
-def phase_correlation_subpixel(ref, mov, mask_ref=None, mask_mov=None):
-    """Simple phase correlation."""
-    ref_work = np.nan_to_num(ref, nan=0.0)
-    mov_work = np.nan_to_num(mov, nan=0.0)
+
+def remove_plane(data, mask=None):
+    """Remove piston and tilt from data for better correlation."""
+    if mask is None:
+        mask = ~np.isnan(data)
     
-    if mask_ref is not None:
-        ref_work = ref_work * mask_ref
-    if mask_mov is not None:
-        mov_work = mov_work * mask_mov
+    if not np.any(mask):
+        return data.copy()
     
-    ref_work = (ref_work - np.mean(ref_work)) / (np.std(ref_work) + 1e-10)
-    mov_work = (mov_work - np.mean(mov_work)) / (np.std(mov_work) + 1e-10)
+    yy, xx = np.indices(data.shape, dtype=float)
+    y_masked = yy[mask].ravel()
+    x_masked = xx[mask].ravel()
+    z_masked = data[mask].ravel()
+    
+    A = np.column_stack([np.ones_like(y_masked), x_masked, y_masked])
+    coeff, *_ = np.linalg.lstsq(A, z_masked, rcond=None)
+    
+    result = data.copy()
+    plane = coeff[0] + coeff[1] * xx + coeff[2] * yy
+    result[mask] = data[mask] - plane[mask]
+    
+    return result
+
+
+def apply_window(data, mask=None):
+    """Apply Hanning window to reduce edge effects in FFT."""
+    rows, cols = data.shape
+    win_y = np.hanning(rows)
+    win_x = np.hanning(cols)
+    window = np.outer(win_y, win_x)
+    
+    result = data.copy()
+    if mask is not None:
+        result[~mask] = 0.0
+    
+    return result * window
+
+
+def phase_correlation_constrained(ref, mov, mask=None, max_shift=MAX_EXPECTED_SHIFT_PX):
+    """Robust phase correlation with constrained search region."""
+    if mask is None:
+        mask = ~np.isnan(ref) & ~np.isnan(mov)
+    
+    ref_detrend = remove_plane(ref, mask)
+    mov_detrend = remove_plane(mov, mask)
+    
+    ref_work = np.nan_to_num(ref_detrend, nan=0.0)
+    mov_work = np.nan_to_num(mov_detrend, nan=0.0)
+    
+    ref_work = apply_window(ref_work, mask)
+    mov_work = apply_window(mov_work, mask)
+    
+    ref_std = np.std(ref_work[mask]) if np.any(mask) else 1.0
+    mov_std = np.std(mov_work[mask]) if np.any(mask) else 1.0
+    
+    if ref_std < 1e-10 or mov_std < 1e-10:
+        return 0.0, 0.0, 0.0
+    
+    ref_work = (ref_work - np.mean(ref_work[mask])) / ref_std
+    mov_work = (mov_work - np.mean(mov_work[mask])) / mov_std
     
     F_ref = fft2(ref_work)
     F_mov = fft2(mov_work)
     
-    R = F_ref * np.conj(F_mov)
-    R /= np.abs(R) + 1e-10
+    cross_power = F_ref * np.conj(F_mov)
+    cross_power /= np.abs(cross_power) + 1e-10
     
-    correlation = np.real(ifft2(R))
+    correlation = np.real(ifft2(cross_power))
     correlation = fftshift(correlation)
     
-    peak_idx = np.unravel_index(np.argmax(correlation), correlation.shape)
+    rows, cols = correlation.shape
+    center_y, center_x = rows // 2, cols // 2
+    
+    yy, xx = np.indices(correlation.shape)
+    dist_from_center = np.sqrt((yy - center_y)**2 + (xx - center_x)**2)
+    search_mask = dist_from_center <= max_shift + 1
+    
+    correlation_masked = correlation.copy()
+    correlation_masked[~search_mask] = -np.inf
+    
+    peak_idx = np.unravel_index(np.argmax(correlation_masked), correlation.shape)
     peak_value = correlation[peak_idx]
     
-    center = np.array(correlation.shape) // 2
-    shift = np.array(peak_idx) - center
+    py, px = peak_idx
     
-    return float(shift[0]), float(shift[1]), float(peak_value)
+    if 1 <= py < rows - 1 and 1 <= px < cols - 1:
+        y_vals = correlation[py-1:py+2, px]
+        if y_vals[0] < y_vals[1] and y_vals[2] < y_vals[1]:
+            dy = (y_vals[0] - y_vals[2]) / (2 * (y_vals[0] + y_vals[2] - 2 * y_vals[1]) + 1e-10)
+        else:
+            dy = 0.0
+        
+        x_vals = correlation[py, px-1:px+2]
+        if x_vals[0] < x_vals[1] and x_vals[2] < x_vals[1]:
+            dx = (x_vals[0] - x_vals[2]) / (2 * (x_vals[0] + x_vals[2] - 2 * x_vals[1]) + 1e-10)
+        else:
+            dx = 0.0
+        
+        dy = np.clip(dy, -0.5, 0.5)
+        dx = np.clip(dx, -0.5, 0.5)
+    else:
+        dy, dx = 0.0, 0.0
+    
+    shift_y = (py + dy) - center_y
+    shift_x = (px + dx) - center_x
+    
+    return float(shift_y), float(shift_x), float(peak_value)
 
 
-class JointPoseOptimizerSimple:
-    """Simplified joint pose optimization."""
+class JointPoseOptimizer:
+    """Robust joint pose optimization with validation."""
     
     def __init__(self, observations, config):
         self.observations = observations
@@ -55,61 +135,151 @@ class JointPoseOptimizerSimple:
         self.global_shape = observations[0].global_shape
         self.tile_shape = observations[0].tile_shape
         
-    def optimize_poses(self, max_iter=3):
-        """Returns pose corrections [n_obs x 2] (dy, dx)."""
+    def optimize_poses(self, max_iter=2):
+        """Returns validated pose corrections [n_obs x 2] (dy, dx)."""
         print(f"  Optimizing {self.n_obs} poses...", flush=True)
         
-        corrections = np.zeros((self.n_obs, 2), dtype=float)
+        pairwise_shifts = []
         
-        # Simple pairwise registration in a chain
-        for i in range(self.n_obs - 1):
-            obs_i = self.observations[i]
-            obs_j = self.observations[i + 1]
-            
-            overlap = self._extract_overlap(obs_i, obs_j)
-            if overlap is not None:
+        for i in range(self.n_obs):
+            for j in range(i + 1, self.n_obs):
+                overlap = self._extract_overlap(i, j)
+                if overlap is None:
+                    continue
+                
                 ref, mov, mask = overlap
-                dy, dx, corr = phase_correlation_subpixel(ref, mov, mask, mask)
-                corrections[i + 1] = corrections[i] + np.array([dy, dx])
-                print(f"    Pair {i}-{i+1}: dy={dy:.3f}, dx={dx:.3f}, corr={corr:.3f}", flush=True)
+                
+                dy, dx, corr = phase_correlation_constrained(ref, mov, mask)
+                
+                shift_magnitude = np.sqrt(dy**2 + dx**2)
+                
+                if shift_magnitude > MAX_EXPECTED_SHIFT_PX or corr < MIN_CORRELATION_PEAK:
+                    print(f"    Pair {i}-{j}: REJECTED (shift={shift_magnitude:.2f}, corr={corr:.3f})", flush=True)
+                    continue
+                
+                pairwise_shifts.append({
+                    'i': i, 'j': j,
+                    'dy': dy, 'dx': dx,
+                    'corr': corr,
+                    'weight': corr
+                })
+                print(f"    Pair {i}-{j}: dy={dy:.4f}, dx={dx:.4f}, corr={corr:.3f} OK", flush=True)
         
+        corrections = self._solve_pose_graph(pairwise_shifts)
         corrections -= corrections.mean(axis=0)
-        print(f"  Pose corrections: max={np.max(np.abs(corrections)):.4f}", flush=True)
+        
+        max_correction = np.max(np.abs(corrections))
+        print(f"  Final corrections: max={max_correction:.4f} px", flush=True)
+        
+        if max_correction > MAX_EXPECTED_SHIFT_PX:
+            print(f"  WARNING: Corrections too large, resetting to zero", flush=True)
+            corrections = np.zeros((self.n_obs, 2))
         
         return corrections
     
-    def _extract_overlap(self, obs_i, obs_j):
-        """Extract overlapping region."""
+    def _solve_pose_graph(self, pairwise_shifts):
+        """Solve for absolute poses from pairwise measurements."""
+        if not pairwise_shifts:
+            return np.zeros((self.n_obs, 2))
+        
+        n_pairs = len(pairwise_shifts)
+        
+        A_rows, A_cols, A_data = [], [], []
+        b_y, b_x = [], []
+        weights = []
+        
+        for row, pair in enumerate(pairwise_shifts):
+            i, j = pair['i'], pair['j']
+            
+            A_rows.extend([row, row])
+            A_cols.extend([i, j])
+            A_data.extend([1.0, -1.0])
+            b_y.append(pair['dy'])
+            
+            A_rows.extend([n_pairs + row, n_pairs + row])
+            A_cols.extend([self.n_obs + i, self.n_obs + j])
+            A_data.extend([1.0, -1.0])
+            b_x.append(pair['dx'])
+            
+            weights.extend([pair['weight'], pair['weight']])
+        
+        for i in range(self.n_obs):
+            A_rows.append(2 * n_pairs)
+            A_cols.append(i)
+            A_data.append(1.0)
+            
+            A_rows.append(2 * n_pairs + 1)
+            A_cols.append(self.n_obs + i)
+            A_data.append(1.0)
+        
+        n_equations = 2 * n_pairs + 2
+        n_vars = 2 * self.n_obs
+        
+        A = sp.csr_matrix((A_data, (A_rows, A_cols)), shape=(n_equations, n_vars))
+        b = np.concatenate([b_y, b_x, [0.0, 0.0]])
+        weights = np.array(weights + [1.0, 1.0])
+        
+        W = sp.diags(np.sqrt(weights))
+        A_w = W @ A
+        b_w = W @ b
+        
+        result, *_ = spla.lsqr(A_w, b_w, damp=1e-6)
+        
+        corrections = np.zeros((self.n_obs, 2))
+        corrections[:, 0] = result[:self.n_obs]
+        corrections[:, 1] = result[self.n_obs:]
+        
+        return corrections
+    
+    def _extract_overlap(self, idx_i, idx_j):
+        """Extract overlapping region between two observations."""
+        obs_i = self.observations[idx_i]
+        obs_j = self.observations[idx_j]
+        
         rows, cols = self.tile_shape
         
         cy_i, cx_i = obs_i.center_xy[1], obs_i.center_xy[0]
         cy_j, cx_j = obs_j.center_xy[1], obs_j.center_xy[0]
         
-        top_i = int(round(cy_i - (rows - 1) / 2.0))
-        left_i = int(round(cx_i - (cols - 1) / 2.0))
-        top_j = int(round(cy_j - (rows - 1) / 2.0))
-        left_j = int(round(cx_j - (cols - 1) / 2.0))
+        # Use integer tile positions
+        top_i = int(cy_i - rows // 2)
+        left_i = int(cx_i - cols // 2)
+        top_j = int(cy_j - rows // 2)
+        left_j = int(cx_j - cols // 2)
         
         g_top = max(top_i, top_j)
         g_left = max(left_i, left_j)
         g_bottom = min(top_i + rows, top_j + rows)
         g_right = min(left_i + cols, left_j + cols)
         
-        if g_bottom <= g_top or g_right <= g_left:
+        overlap_height = g_bottom - g_top
+        overlap_width = g_right - g_left
+        
+        if overlap_height < 20 or overlap_width < 20:
             return None
         
-        li_top, li_left = g_top - top_i, g_left - left_i
-        li_bottom, li_right = g_bottom - top_i, g_right - left_i
+        li_top = g_top - top_i
+        li_left = g_left - left_i
+        li_bottom = li_top + overlap_height
+        li_right = li_left + overlap_width
         
-        lj_top, lj_left = g_top - top_j, g_left - left_j
-        lj_bottom, lj_right = g_bottom - top_j, g_right - left_j
+        lj_top = g_top - top_j
+        lj_left = g_left - left_j
+        lj_bottom = lj_top + overlap_height
+        lj_right = lj_left + overlap_width
         
-        ref_patch = obs_i.z[li_top:li_bottom, li_left:li_right]
-        mov_patch = obs_j.z[lj_top:lj_bottom, lj_left:lj_right]
-        mask_patch = obs_i.valid_mask[li_top:li_bottom, li_left:li_right] & \
-                     obs_j.valid_mask[lj_top:lj_bottom, lj_left:lj_right]
+        # Make sure indices are valid
+        if li_top < 0 or li_left < 0 or lj_top < 0 or lj_left < 0:
+            return None
+        if li_bottom > rows or li_right > cols or lj_bottom > rows or lj_right > cols:
+            return None
         
-        if np.sum(mask_patch) < 100:
+        ref_patch = obs_i.z[li_top:li_bottom, li_left:li_right].copy()
+        mov_patch = obs_j.z[lj_top:lj_bottom, lj_left:lj_right].copy()
+        mask_patch = (obs_i.valid_mask[li_top:li_bottom, li_left:li_right] & 
+                     obs_j.valid_mask[lj_top:lj_bottom, lj_left:lj_right])
+        
+        if np.sum(mask_patch) < 200:
             return None
         
         return ref_patch, mov_patch, mask_patch
@@ -129,12 +299,25 @@ class CandidateStitcher:
                 observed_support_mask=np.array([], dtype=bool)
             )
 
-        # Skip pose optimization for now - use identity corrections
-        pose_corrections = np.zeros((len(observations), 2), dtype=float)
-        registered_observations = observations
+        enable_registration = False  # Disabled due to guardrail issues
+        
+        if enable_registration and len(observations) > 1:
+            optimizer = JointPoseOptimizer(observations, config)
+            pose_corrections = optimizer.optimize_poses()
+            
+            if np.max(np.abs(pose_corrections)) < MAX_EXPECTED_SHIFT_PX:
+                registered_observations = self._apply_pose_corrections(
+                    observations, pose_corrections
+                )
+            else:
+                print("  Pose corrections rejected - using original poses")
+                registered_observations = observations
+                pose_corrections = np.zeros((len(observations), 2))
+        else:
+            registered_observations = observations
+            pose_corrections = np.zeros((len(observations), 2))
         
         tile_shape = observations[0].tile_shape
-        global_shape = observations[0].global_shape
         reference_map = np.zeros(tile_shape, dtype=float)
         nuisances = self._solve_global_alignment(registered_observations, reference_map)
 
@@ -176,7 +359,7 @@ class CandidateStitcher:
             source_observation_ids=tuple(o.observation_id for o in observations),
             observed_support_mask=support,
             metadata={
-                "method": "siac_with_registration",
+                "method": "siac_robust_registration",
                 "reference_map_rms": ref_rms,
                 "pose_corrections": pose_corrections,
                 "pose_correction_rms": float(np.sqrt(np.mean(pose_corrections**2))),
@@ -185,21 +368,30 @@ class CandidateStitcher:
         )
     
     def _apply_pose_corrections(self, observations, corrections):
-        """Apply pose corrections by interpolation."""
+        """Apply sub-pixel pose corrections via interpolation."""
         registered = []
         
         for i, obs in enumerate(observations):
             dy, dx = corrections[i]
             
+            if abs(dy) < 1e-6 and abs(dx) < 1e-6:
+                registered.append(obs)
+                continue
+            
             yy, xx = np.indices(obs.tile_shape, dtype=float)
             coords = np.array([yy - dy, xx - dx])
             
             z_corrected = map_coordinates(
-                obs.z, coords, order=3, mode='constant', cval=np.nan
+                np.nan_to_num(obs.z, nan=0.0), 
+                coords, order=3, mode='reflect'
             )
+            
             mask_corrected = map_coordinates(
-                obs.valid_mask.astype(float), coords, order=0, mode='constant', cval=0
+                obs.valid_mask.astype(float), 
+                coords, order=0, mode='constant', cval=0
             ) > 0.5
+            
+            z_corrected[~mask_corrected] = np.nan
             
             registered.append(SubApertureObservation(
                 observation_id=obs.observation_id,
@@ -208,6 +400,7 @@ class CandidateStitcher:
                 center_xy=obs.center_xy,
                 tile_shape=obs.tile_shape,
                 global_shape=obs.global_shape,
+                rotation_deg=obs.rotation_deg,
             ))
         
         return tuple(registered)
@@ -340,9 +533,8 @@ class CandidateStitcher:
         valid = sum_w > 0
         reference_map[valid] = sum_r[valid] / sum_w[valid]
         
-        sigma_filter = SIGMA_FILTER
         ref_filled = np.where(valid, reference_map, 0.0)
-        ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
+        ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=SIGMA_FILTER)
         
         reference_map[valid] = ref_smoothed[valid]
 
