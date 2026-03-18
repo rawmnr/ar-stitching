@@ -76,6 +76,7 @@ def main():
         "GLS Robust (Huber)": "src/stitching/editable/gls_robust/baseline.py",
         "SCS (Calibration)": "src/stitching/editable/scs/baseline.py",
         "SIAC (Alternating)": "src/stitching/editable/siac/baseline.py",
+        "SIAC+Reg (SubPixel)": "src/stitching/editable/siac_reg/baseline.py",
         "PSO (Stochastic)": "src/stitching/editable/pso/baseline.py",
     }
 
