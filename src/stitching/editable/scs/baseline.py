@@ -4,7 +4,12 @@ from __future__ import annotations
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+from scipy import ndimage
 from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertureObservation
+
+# Configuration anti-artefacts
+EDGE_EROSION_PX = 2
+FEATHER_WIDTH = 0.20
 
 class CandidateStitcher:
     def reconstruct(
@@ -215,13 +220,13 @@ class CandidateStitcher:
         
         # Apply a modest low-pass filter to reduce the re-projection of
         # high-frequency temporal noise into the static calibration map.
-        from scipy import ndimage
-        sigma_filter = 1.0
+        # Reduced sigma from 1.0 to 0.7 to preserve more high-frequency calibration.
+        sigma_filter = 0.7
         ref_filled = np.where(master_mask, R_map, 0.0)
         ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
         R_map[master_mask] = ref_smoothed[master_mask]
-        
-        # Final reconstruction (fusion)
+
+        # Final reconstruction (fusion) - simple uniform average
         sum_z = np.zeros(global_shape, dtype=float)
         count = np.zeros(global_shape, dtype=float)
         support = np.zeros(global_shape, dtype=bool)
@@ -236,7 +241,10 @@ class CandidateStitcher:
             
             z_corr = obs.z - model - R_map
             
-            weights = np.ones_like(z_corr)
+            # Éroder le masque pour exclure les bords bruités (poids -> 0)
+            working_mask = self._get_eroded_mask(obs.valid_mask)
+            # Pondération cosinus lisse sur le masque érodé
+            feather_weights = self._smooth_feather_weights(working_mask)
             
             cx, cy = obs.center_xy
             top = int(round(cy - (tile_shape[0] - 1) / 2.0))
@@ -250,12 +258,15 @@ class CandidateStitcher:
             
             if gy_e > gy_s and gx_e > gx_s:
                 local_z = z_corr[ly_s:ly_e, lx_s:lx_e]
-                local_mask = obs.valid_mask[ly_s:ly_e, lx_s:lx_e]
-                local_weights = weights[ly_s:ly_e, lx_s:lx_e]
+                # Support tracké avec le masque original
+                local_mask_orig = obs.valid_mask[ly_s:ly_e, lx_s:lx_e]
+                # Poids calculés sur masque érodé
+                local_weights = feather_weights[ly_s:ly_e, lx_s:lx_e]
                 
-                sum_z[gy_s:gy_e, gx_s:gx_e][local_mask] += local_z[local_mask] * local_weights[local_mask]
-                count[gy_s:gy_e, gx_s:gx_e][local_mask] += local_weights[local_mask]
-                support[gy_s:gy_e, gx_s:gx_e][local_mask] = True
+                # Accumuler avec le masque original pour le support
+                sum_z[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_z[local_mask_orig] * local_weights[local_mask_orig]
+                count[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_weights[local_mask_orig]
+                support[gy_s:gy_e, gx_s:gx_e][local_mask_orig] = True
 
         valid_mask = count > 0
         z = np.full(global_shape, np.nan, dtype=float)
@@ -272,3 +283,37 @@ class CandidateStitcher:
             observed_support_mask=support,
             metadata={"method": "scs_simultaneous", "instrument_calibration": R_map_final},
         )
+
+    def _get_eroded_mask(self, valid_mask: np.ndarray) -> np.ndarray:
+        """Érode le masque pour exclure les pixels de bord bruités."""
+        if EDGE_EROSION_PX <= 0:
+            return valid_mask.copy()
+        structure = np.ones((3, 3), dtype=bool)
+        eroded = ndimage.binary_erosion(valid_mask, structure=structure, iterations=EDGE_EROSION_PX)
+        return eroded
+
+    def _smooth_feather_weights(self, valid_mask: np.ndarray) -> np.ndarray:
+        """Pondération cosinus avec dérivée nulle aux transitions."""
+        weights = np.zeros(valid_mask.shape, dtype=float)
+        if not np.any(valid_mask):
+            return weights
+        
+        dist = ndimage.distance_transform_edt(valid_mask)
+        max_dist = np.max(dist)
+        if max_dist <= 0:
+            weights[valid_mask] = 1.0
+            return weights
+        
+        feather_dist = FEATHER_WIDTH * max_dist
+        
+        # Zone de transition: cosinus
+        in_feather = valid_mask & (dist <= feather_dist)
+        if np.any(in_feather):
+            d_norm = dist[in_feather] / max(feather_dist, 1.0)
+            weights[in_feather] = 0.5 * (1.0 - np.cos(np.pi * d_norm))
+        
+        # Plateau central
+        plateau = valid_mask & (dist > feather_dist)
+        weights[plateau] = 1.0
+        
+        return weights
