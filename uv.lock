@@ -41,6 +41,7 @@ dependencies = [
     { name = "numpy" },
     { name = "openai" },
     { name = "pandas" },
+    { name = "pypdf" },
     { name = "pyyaml" },
     { name = "scipy" },
 ]
@@ -68,6 +69,7 @@ requires-dist = [
     { name = "optiland", marker = "extra == 'optiq'" },
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "prysm", marker = "extra == 'zernike-alt'" },
+    { name = "pypdf", specifier = ">=4.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "scipy", specifier = ">=1.13" },
@@ -1315,6 +1317,15 @@ source = { registry = "https://artifacts.cloud.one.ad/repository/pypi-group/simp
 sdist = { url = "https://artifacts.cloud.one.ad/repository/pypi-group/packages/pyparsing/3.3.2/pyparsing-3.3.2.tar.gz", hash = "sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc" }
 wheels = [
     { url = "https://artifacts.cloud.one.ad/repository/pypi-group/packages/pyparsing/3.3.2/pyparsing-3.3.2-py3-none-any.whl", hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d" },
+]
+
+[[package]]
+name = "pypdf"
+version = "6.9.0"
+source = { registry = "https://artifacts.cloud.one.ad/repository/pypi-group/simple/" }
+sdist = { url = "https://artifacts.cloud.one.ad/repository/pypi-group/packages/pypdf/6.9.0/pypdf-6.9.0.tar.gz", hash = "sha256:a59257869fc575ba2ccc10100a36be0a47cd1bc1fb00f2950abf1d219fa94c01" }
+wheels = [
+    { url = "https://artifacts.cloud.one.ad/repository/pypi-group/packages/pypdf/6.9.0/pypdf-6.9.0-py3-none-any.whl", hash = "sha256:85805ad7457ca878c4cfd1bc026c4b3dcae359b4a80f889fa7e8c5a1c1a83e51" },
 ]
 
 [[package]]

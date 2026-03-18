@@ -25,9 +25,15 @@ def build_experiment_context(
     # Compact per-scenario feedback
     scenario_breakdown = ""
     if scenario_results:
-        lines = [f"{'✓' if r.get('accepted') else '✗'} {sid}: RMS={r.get('rms', 0):.6f}"
-                 for sid, r in scenario_results.items()]
-        scenario_breakdown = " | ".join(lines)
+        items = []
+        for sid, r in scenario_results.items():
+            line = f"{'✓' if r.get('accepted') else '✗'} {sid}: RawRMS={r.get('rms', 0):.4f}"
+            if r.get('rms_detrended') is not None:
+                line += f" | DetrendRMS={r.get('rms_detrended'):.4f}"
+            if r.get('tilt_piston_rms') is not None:
+                line += f" | TiltMag={r.get('tilt_piston_rms'):.4f}"
+            items.append(line)
+        scenario_breakdown = "\n".join(items)
     
     # Context summary
     curr_rms = current_metrics.get('aggregate_rms', float('inf'))
@@ -37,22 +43,16 @@ def build_experiment_context(
     strategy = ""
     if iteration == 0:
         strategy = "TINY CHANGE 1: Add z = z * 0.997 AFTER the line 'z = sum_z / np.maximum(count, 1)'. Do NOT change anything else."
-    elif iteration == 1:
-        strategy = "TINY CHANGE 2: Replace 0.997 with 0.995. If that made RMS worse, try 0.999."
-    elif iteration == 2:
-        strategy = "TINY CHANGE 3: Keep overlap_count tracking from baseline, only change the scaling factor."
-    elif iteration == 3:
-        strategy = "TINY CHANGE 4: Try 'z[overlap_count>1] *= 0.99' to scale ONLY overlapping pixels."
-    elif iteration < 8:
-        strategy = f"MINIMAL CHANGE: Adjust the scale factor slightly (try 0.990 to 1.000 range)."
+    elif iteration < 5:
+        strategy = f"Refine the global scale or implement a tiny per-tile piston correction."
     else:
-        strategy = "Any tiny improvement. Keep it under 5 lines of code."
+        strategy = "Implement a tiny global tilt correction using scipy.linalg.lstsq if TiltMag is high."
 
     # Error hints
     error_hint = ""
     if previous_summary:
         if "REJECTED_CRASH" in previous_summary:
-            error_hint = "\n⚠️ PREVIOUS CRASHED - keep code minimal!"
+            error_hint = "\n⚠️ PREVIOUS CRASHED - check your matrix shapes!"
         elif "np.math" in previous_summary:
             error_hint = "\n⚠️ Use math.factorial NOT np.math.factorial"
         elif "copy=False" in previous_summary:
@@ -61,7 +61,7 @@ def build_experiment_context(
     # Ultra-concise prompt - ~150 tokens
     extended_notes = f"""# TASK: Reduce RMS on {scenario_ids or 'scenarios'}
 
-## Current: RMS={curr_rms:.6f} | Best={best_rms:.6f}
+## Current: Aggregate RMS={curr_rms:.6f} | Best={best_rms:.6f}
 {scenario_breakdown}{error_hint}
 
 ## STRATEGY (iter {iteration}):
@@ -71,6 +71,7 @@ def build_experiment_context(
 ```python
 import numpy as np
 from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertureObservation
+# import scipy.linalg # allowed for tilt/piston estimation
 
 class CandidateStitcher:
     def reconstruct(self, observations, config):
@@ -93,13 +94,13 @@ class CandidateStitcher:
         
         z = sum_z / np.maximum(count, 1)
         
-        # === PASTE YOUR 1-LINE CHANGE HERE (e.g., z = z * 0.997) ===
+        # === PASTE YOUR 1-LINE CHANGE HERE ===
         
         return ReconstructionSurface(z=z, valid_mask=count>0, source_observation_ids=tuple(o.observation_id for o in obs_list), observed_support_mask=support)
 ```
 
 ## RULES:
-- NO scipy, NO lstsq, NO matrix operations
+- Use scipy.linalg.lstsq ONLY if needed for tilt/piston
 - NO copy=False in np.array()
 - One small change at a time
 - Keep class CandidateStitcher"""

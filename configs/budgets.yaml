@@ -13,7 +13,7 @@ fast:
   total_time_sec: 200
   max_memory_mb: 4096
   max_candidate_lines: 1500
-  max_attempts_per_iteration: 3
+  max_attempts_per_iteration: 5
 
 overnight:
   agent_time_sec: 300

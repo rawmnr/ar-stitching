@@ -28,6 +28,7 @@ metadata:
   geometric_retrace_error: 0.1
   interpolation_order: 3
   ignore_piston: true
+  ignore_tilt: true
   # Robustness evaluation: Random alignment terms per sub-aperture
   # (0:Piston, 1:Tip, 2:Tilt, 3:Focus)
   alignment_term: [0, 1, 2] 

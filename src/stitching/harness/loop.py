@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import traceback
+import dataclasses
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -169,10 +170,13 @@ class AutoresearchLoop:
         # 2. Build per-scenario breakdown for better feedback
         scenario_results = {}
         for r in current_reports:
+            sig = r.signal_metrics
             scenario_results[r.scenario_id] = {
-                "rms": r.signal_metrics.get("rms_on_valid_intersection", float("inf")),
-                    "accepted": r.accepted,
-                }
+                "rms": sig.get("rms_on_valid_intersection", float("inf")),
+                "rms_detrended": sig.get("rms_detrended"),
+                "tilt_piston_rms": sig.get("tilt_piston_rms"),
+                "accepted": r.accepted,
+            }
 
         # 3. Build context
         context = build_experiment_context(
@@ -211,7 +215,10 @@ class AutoresearchLoop:
                 logger.info("Retrying iteration %d (Attempt %d/%d) due to evaluation failure", 
                             iteration, attempt + 1, self.budget.max_attempts_per_iteration)
                 # Update context with the error from previous attempt
-                context.previous_summary = f"REJECTED_CRASH (Attempt {attempt}): {last_error[:200]}"
+                context = dataclasses.replace(
+                    context,
+                    previous_summary=f"REJECTED_CRASH (Attempt {attempt}): {last_error[:200]}"
+                )
 
             # 4a. Ask agent for a patch
             try:

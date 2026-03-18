@@ -20,6 +20,16 @@ backends:
     model: gpt-oss-prod
     timeout_sec: 500
 
+  opencode_minimax25:
+    provider: opencode
+    model: minimax-m2.5-free
+    timeout_sec: 500
+
+  opencode_minimax25_or:
+    provider: openrouter
+    model: minimax/minimax-m2.5
+    timeout_sec: 500
+
   opencode-devstral:
     provider: llama-swap
     model: devstral-standard

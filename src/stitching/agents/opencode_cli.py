@@ -23,7 +23,7 @@ class OpenCodeCliBackend(AgentBackend):
     """Agent backend wrapping sst1/opencode CLI."""
     
     # Retry configuration
-    MAX_RETRIES = 3
+    MAX_RETRIES = 5
     RETRY_DELAY_SEC = 2.0
     
     # Minimum expected runtime (seconds) - if faster, likely no action taken
@@ -86,7 +86,7 @@ class OpenCodeCliBackend(AgentBackend):
             
             try:
                 stdout_text, stderr_text, return_code = self._execute_opencode(
-                    cli_prompt, context
+                    cli_prompt, context, attempt=attempt
                 )
                 
                 # Check for opencode failure (crash/error)
@@ -186,6 +186,7 @@ class OpenCodeCliBackend(AgentBackend):
         self,
         prompt: str,
         context: ExperimentContext,
+        attempt: int = 0,
     ) -> tuple[str, str, int]:
         """Execute the opencode CLI and return (stdout, stderr, return_code)."""
         
@@ -217,37 +218,33 @@ class OpenCodeCliBackend(AgentBackend):
         
         is_windows = os.name == "nt"
         
-        result = subprocess.run(
-            [executable] + cmd[1:],
-            cwd=str(self.repo_root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=self.timeout_sec,
-            shell=is_windows,
-            env=env,
-        )
+        # USE FILE-BASED STREAMING to prevent OS buffer hangs on Windows
+        debug_dir = self.repo_root / "experiments" / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        log_path = debug_dir / f"opencode_iter{context.iteration}_att{attempt}.log"
         
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
-        
-        # Debug logging
-        try:
-            debug_dir = self.repo_root / "experiments" / "debug"
-            debug_dir.mkdir(parents=True, exist_ok=True)
-            debug_log = debug_dir / f"opencode_iter{context.iteration}.log"
-            debug_log.write_text(
-                f"=== COMMAND ===\n{' '.join(cmd)}\n\n"
-                f"=== PROMPT ===\n{prompt}\n\n"
-                f"=== STDOUT ===\n{stdout}\n\n"
-                f"=== STDERR ===\n{stderr}\n\n"
-                f"=== RETURN CODE ===\n{result.returncode}\n",
-                encoding="utf-8",
+        with open(log_path, "w", encoding="utf-8") as log_file:
+            log_file.write(f"=== COMMAND ===\n{' '.join(cmd)}\n\n")
+            log_file.write(f"=== PROMPT ===\n{prompt}\n\n")
+            log_file.flush()
+            
+            # Start process with output redirected to file
+            result = subprocess.run(
+                [executable] + cmd[1:],
+                cwd=str(self.repo_root),
+                stdout=log_file,
+                stderr=subprocess.STDOUT, # Merge stderr into stdout file
+                timeout=self.timeout_sec,
+                shell=is_windows,
+                env=env,
             )
-        except Exception as e:
-            logger.error("Failed to write debug log: %s", e)
+            
+        # Read back the full output
+        full_output = log_path.read_text(encoding="utf-8")
         
-        return stdout, stderr, result.returncode
+        # Split into stdout/stderr (roughly, since they are merged)
+        # We return merged as stdout and empty stderr for simplicity
+        return full_output, "", result.returncode
 
     def _validate_code(self, code: str) -> str | None:
         """Validate Python code and apply automatic trivial fixes."""

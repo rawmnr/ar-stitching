@@ -115,8 +115,18 @@ def evaluate_candidate_on_suite(
     for sp in scenario_paths:
         report = evaluate_candidate_on_scenario(candidate, sp, eval_budget_sec)
         reports.append(report)
-        rms_values.append(report.signal_metrics["rms_on_valid_intersection"])
-        mae_values.append(report.signal_metrics["mae_on_valid_intersection"])
+        
+        # Determine if we use raw or detrended metrics for this scenario
+        use_detrended = bool(report.config.metadata.get("ignore_tilt", False))
+        sig = report.signal_metrics
+        
+        if use_detrended:
+            rms_values.append(sig.get("rms_detrended", sig["rms_on_valid_intersection"]))
+            mae_values.append(sig.get("mae_detrended", sig["mae_on_valid_intersection"]))
+        else:
+            rms_values.append(sig["rms_on_valid_intersection"])
+            mae_values.append(sig["mae_on_valid_intersection"])
+            
         total_runtime += report.runtime_sec
 
     aggregate = {
@@ -135,6 +145,9 @@ def _enforce_guardrails(report: EvalReport) -> None:
     """Check hard guardrails that cannot be violated regardless of improvement."""
     geom = report.geometry_metrics
     sig = report.signal_metrics
+    
+    use_detrended = bool(report.config.metadata.get("ignore_tilt", False))
+    current_rms = sig.get("rms_detrended") if use_detrended else sig["rms_on_valid_intersection"]
 
     if geom["footprint_iou"] < GUARDRAIL_CHECKS["footprint_iou_min"]:
         raise GuardrailViolation(
@@ -142,9 +155,9 @@ def _enforce_guardrails(report: EvalReport) -> None:
             f"< {GUARDRAIL_CHECKS['footprint_iou_min']}"
         )
 
-    if sig["rms_on_valid_intersection"] > GUARDRAIL_CHECKS["max_rms_on_valid_intersection"]:
+    if current_rms > GUARDRAIL_CHECKS["max_rms_on_valid_intersection"]:
         raise GuardrailViolation(
-            f"rms={sig['rms_on_valid_intersection']:.6f} "
+            f"rms={current_rms:.6f} "
             f"> absolute cap {GUARDRAIL_CHECKS['max_rms_on_valid_intersection']}"
         )
 

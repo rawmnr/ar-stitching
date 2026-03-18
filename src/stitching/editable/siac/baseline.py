@@ -1,5 +1,4 @@
-"""Least-Squares Stitcher for optical sub-aperture alignment."""
-# Hypothesis: Use weighted averaging in reconstruction with higher weight on central pixels. The GLS solver estimates piston+tip+tilt, but reconstruction uses SNR-based weighting to reduce edge effects.
+"""Stitching Interferometry using Alternating Calibration (SIAC) Baseline."""
 from __future__ import annotations
 
 import numpy as np
@@ -8,38 +7,30 @@ import scipy.sparse.linalg as spla
 from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertureObservation
 
 class CandidateStitcher:
-    """Least-Squares stitcher estimating alignment nuisances from overlaps."""
-
     def reconstruct(
         self,
         observations: tuple[SubApertureObservation, ...],
         config: ScenarioConfig,
     ) -> ReconstructionSurface:
-        # 1. Estimate alignment parameters [Piston, Tip, Tilt] via Global Least Squares
-        nuisances = self._solve_global_alignment(observations)
+        # SIAC separates solving for Piston and Tip/Tilt to prevent crosstalk
+        nuisances = self._solve_alternating(observations)
         
         global_shape = observations[0].global_shape
         sum_z = np.zeros(global_shape, dtype=float)
         count = np.zeros(global_shape, dtype=float)
         support = np.zeros(global_shape, dtype=bool)
 
-        # 2. Correct and Assemble with SNR-weighted averaging
         for i, obs in enumerate(observations):
             rows, cols = obs.tile_shape
-            
-            # Reconstruct the nuisance model for this observation
             yy, xx = np.indices(obs.tile_shape, dtype=float)
             y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
             x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
             
             p, tip, tilt, focus = nuisances[i]
             model = p + tip * y_norm + tilt * x_norm
-            
             z_corr = obs.z - model
             
-            # Compute SNR weights (higher in center, lower at edges)
-            r = np.sqrt(y_norm**2 + x_norm**2)
-            weights = 1.0 / (1.0 + r**2)  # Radial weighting
+            weights = np.ones_like(z_corr)
             
             cx, cy = obs.center_xy
             top = int(round(cy - (rows - 1) / 2.0))
@@ -69,23 +60,16 @@ class CandidateStitcher:
             valid_mask=valid_mask,
             source_observation_ids=tuple(o.observation_id for o in observations),
             observed_support_mask=support,
-            metadata={"method": "global_least_squares_weighted"},
+            metadata={"method": "siac_alternating"},
         )
 
-    def _solve_global_alignment(self, observations: tuple[SubApertureObservation, ...]) -> np.ndarray:
-        """Solve for per-subaperture alignment nuisances [Piston, Tip, Tilt] only (no Focus)."""
+    def _solve_alternating(self, observations: tuple[SubApertureObservation, ...]) -> np.ndarray:
         n_obs = len(observations)
-        n_params = 3  # [Piston, Tip, Tilt] - no Focus to avoid over-correction
         if n_obs <= 1:
             return np.zeros((n_obs, 4))
-
+            
         global_shape = observations[0].global_shape
-        
-        all_obs_indices = []
-        all_flat_indices = []
-        all_z = []
-        all_xn = []
-        all_yn = []
+        all_obs_indices, all_flat_indices, all_z, all_xn, all_yn = [], [], [], [], []
 
         for i, obs in enumerate(observations):
             rows, cols = obs.tile_shape
@@ -98,7 +82,6 @@ class CandidateStitcher:
             
             yy, xx = yy[valid_global], xx[valid_global]
             gy, gx = gy[valid_global], gx[valid_global]
-            
             y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
             x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
             
@@ -125,57 +108,72 @@ class CandidateStitcher:
         boundaries = np.where(diff > 0)[0] + 1
         boundaries = np.concatenate(([0], boundaries, [len(flat_idx)]))
 
-        rows_a, cols_a, data_a = [], [], []
-        b = []
-        row_count = 0
-        
+        overlap_pairs = []
         for s, e in zip(boundaries[:-1], boundaries[1:]):
             if e - s < 2:
                 continue
-            
             ref_o = obs_idx[s]
-            ref_z = z_vals[s]
-            ref_xn = xn_vals[s]
-            ref_yn = yn_vals[s]
-            
             for j in range(s + 1, e):
-                oth_o = obs_idx[j]
-                oth_z = z_vals[j]
-                oth_xn = xn_vals[j]
-                oth_yn = yn_vals[j]
-                
-                rows_a.extend([row_count] * 3)
-                cols_a.extend([ref_o * n_params + k for k in range(3)])
-                data_a.extend([1.0, ref_yn, ref_xn])
-                
-                rows_a.extend([row_count] * 3)
-                cols_a.extend([oth_o * n_params + k for k in range(3)])
-                data_a.extend([-1.0, -oth_yn, -oth_xn])
-                
-                b.append(ref_z - oth_z)
-                row_count += 1
+                overlap_pairs.append((ref_o, obs_idx[j], z_vals[s], z_vals[j], xn_vals[s], yn_vals[s], xn_vals[j], yn_vals[j]))
 
-        if not b:
-            return np.zeros((n_obs, 4))
+        nuisances = np.zeros((n_obs, 4)) # p, tip, tilt, focus
+        max_alternating_iter = 3
         
-        A = sp.csr_matrix((data_a, (rows_a, cols_a)), shape=(row_count, n_obs * n_params))
-        b_np = np.array(b)
-        
-        # Weak constraint (mean = 0) with minimal regularization
-        C_data, C_rows, C_cols = [], [], []
-        for k in range(n_params):
-            for i in range(n_obs):
-                C_data.append(1.0)
-                C_rows.append(k)
-                C_cols.append(i * n_params + k)
-        Constraint = sp.csr_matrix((C_data, (C_rows, C_cols)), shape=(n_params, n_obs * n_params))
-        
-        lambda_reg = 1e-4  # Reduced from 1e-2
-        A_aug = sp.vstack([A, Constraint, lambda_reg * sp.eye(n_obs * n_params)])
-        b_aug = np.concatenate([b_np, np.zeros(n_params), np.zeros(n_obs * n_params)])
-        
-        x, *_ = spla.lsqr(A_aug, b_aug, damp=1e-8, atol=1e-10, btol=1e-10)
-        
-        result = np.zeros((n_obs, 4), dtype=float)
-        result[:, :3] = x.reshape((n_obs, n_params))
-        return result
+        for _ in range(max_alternating_iter):
+            # Step 1: Solve for Tip/Tilt assuming Piston is fixed
+            rows_a, cols_a, data_a, b = [], [], [], []
+            row_count = 0
+            for (r_o, o_o, r_z, o_z, r_xn, r_yn, o_xn, o_yn) in overlap_pairs:
+                r_p = nuisances[r_o, 0]
+                o_p = nuisances[o_o, 0]
+                
+                rows_a.extend([row_count] * 2)
+                cols_a.extend([r_o * 2 + 0, r_o * 2 + 1])
+                data_a.extend([r_yn, r_xn])
+                
+                rows_a.extend([row_count] * 2)
+                cols_a.extend([o_o * 2 + 0, o_o * 2 + 1])
+                data_a.extend([-o_yn, -o_xn])
+                
+                b.append((r_z - r_p) - (o_z - o_p))
+                row_count += 1
+                
+            if b:
+                A = sp.csr_matrix((data_a, (rows_a, cols_a)), shape=(row_count, n_obs * 2))
+                b_np = np.array(b)
+                x, *_ = spla.lsqr(A, b_np, damp=1e-8, atol=1e-10, btol=1e-10)
+                nuisances[:, 1:3] = x.reshape((n_obs, 2))
+                
+            # Step 2: Solve for Piston assuming Tip/Tilt is fixed
+            rows_a, cols_a, data_a, b = [], [], [], []
+            row_count = 0
+            for (r_o, o_o, r_z, o_z, r_xn, r_yn, o_xn, o_yn) in overlap_pairs:
+                r_tip, r_tilt = nuisances[r_o, 1], nuisances[r_o, 2]
+                o_tip, o_tilt = nuisances[o_o, 1], nuisances[o_o, 2]
+                
+                r_t_model = r_tip * r_yn + r_tilt * r_xn
+                o_t_model = o_tip * o_yn + o_tilt * o_xn
+                
+                rows_a.extend([row_count, row_count])
+                cols_a.extend([r_o, o_o])
+                data_a.extend([1.0, -1.0])
+                
+                b.append((r_z - r_t_model) - (o_z - o_t_model))
+                row_count += 1
+                
+            if b:
+                A = sp.csr_matrix((data_a, (rows_a, cols_a)), shape=(row_count, n_obs))
+                b_np = np.array(b)
+                C_data, C_rows, C_cols = [], [], []
+                for i in range(n_obs):
+                    C_data.append(1.0)
+                    C_rows.append(0)
+                    C_cols.append(i)
+                Constraint = sp.csr_matrix((C_data, (C_rows, C_cols)), shape=(1, n_obs))
+                A_aug = sp.vstack([A, Constraint, 1e-4 * sp.eye(n_obs)])
+                b_aug = np.concatenate([b_np, [0.0], np.zeros(n_obs)])
+                
+                x, *_ = spla.lsqr(A_aug, b_aug, damp=1e-8, atol=1e-10, btol=1e-10)
+                nuisances[:, 0] = x[:n_obs]
+                
+        return nuisances
