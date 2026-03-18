@@ -60,18 +60,18 @@ def test_zernike_internal_backend_generates_circular_surface() -> None:
     surface = generate_zernike_surface(coefficients=np.array([0.1, 0.2]), shape=(9, 9), backend="internal")
 
     assert surface.shape == (9, 9)
-    assert np.std(surface) > 0.0
-    assert surface[0, 0] == 0.0
+    assert np.nanstd(surface) > 0.0
+    assert np.isnan(surface[0, 0])
 
 
 def test_zernike_internal_basic_modes_are_consistent() -> None:
     piston = generate_zernike_surface(coefficients=np.array([1.0]), shape=(9, 9), indexing="noll", backend="internal")
     tilt = generate_zernike_surface(coefficients=np.array([0.0, 1.0]), shape=(9, 9), indexing="noll", backend="internal")
-    mask = piston != 0.0
+    mask = ~np.isnan(piston)
 
     assert np.allclose(piston[mask], 1.0)
-    assert np.isclose(np.mean(tilt[mask]), 0.0, atol=1e-12)
-    assert np.allclose(tilt[:, 4], -np.flipud(tilt[:, 4]))
+    assert np.isclose(np.nanmean(tilt), 0.0, atol=1e-12)
+    assert np.allclose(tilt[:, 4], -np.flipud(tilt[:, 4]), equal_nan=True)
 
 
 def test_zernike_auto_backend_falls_back_to_internal_when_optional_backends_are_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -85,7 +85,7 @@ def test_zernike_auto_backend_falls_back_to_internal_when_optional_backends_are_
     surface = generate_zernike_surface(coefficients=np.array([0.1, 0.2]), shape=(9, 9), backend="auto")
 
     assert surface.shape == (9, 9)
-    assert np.std(surface) > 0.0
+    assert np.nanstd(surface) > 0.0
 
 
 def test_zernike_auto_backend_prefers_first_available_optional_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,4 +132,4 @@ def test_zernike_internal_matches_optiland_when_available() -> None:
     external = generate_zernike_surface(coefficients=coefficients, shape=(33, 33), backend="optiland")
 
     assert internal.shape == external.shape
-    assert np.allclose(internal, external, atol=1e-6, rtol=1e-6)
+    assert np.allclose(internal, external, atol=1e-6, rtol=1e-6, equal_nan=True)

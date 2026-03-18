@@ -185,10 +185,23 @@ def simulate_identity_observations(
 
     # 4. Pre-calculate static instrument reference bias (detector frame)
     ref_bias_coeffs = config.metadata.get("reference_bias_coefficients")
+    radius_frac = None
+    if config.metadata.get("detector_pupil") == "circular":
+        radius_frac = float(config.metadata.get("detector_radius_fraction", 0.45))
+
     if ref_bias_coeffs is not None:
-        static_inst_bias = generate_reference_bias_field(tile_shape, np.array(ref_bias_coeffs, dtype=float))
+        static_inst_bias = generate_reference_bias_field(
+            tile_shape, 
+            np.array(ref_bias_coeffs, dtype=float),
+            radius_fraction=radius_frac
+        )
     else:
-        static_inst_bias = 0.0
+        # If circular, we still might want a zero field with NaNs if the user wants "reference bias" to be masked
+        if radius_frac is not None:
+            from stitching.trusted.instrument.bias import stationary_reference_bias
+            static_inst_bias = stationary_reference_bias(tile_shape, 0.0, radius_fraction=radius_frac)
+        else:
+            static_inst_bias = 0.0
 
     for index, offset in enumerate(config.scan_offsets):
         rotation_deg = float(config.rotation_deg[min(index, len(config.rotation_deg) - 1)])
@@ -224,6 +237,10 @@ def simulate_identity_observations(
             coordinate_perturbation_xy=perturbation
         )
 
+        # Apply Retrace Error early (physically surface-dependent, not instrument/detector dependent)
+        slope_retrace = float(config.metadata.get("slope_retrace_error", 0.0))
+        z = apply_retrace_error(z, config.retrace_error, slope_magnitude=slope_retrace)
+
         # 1. Apply Detector Pupil Mask & Edge Roll-off
         if config.metadata.get("detector_pupil") == "circular":
             from stitching.trusted.surface.footprint import circular_pupil_mask
@@ -249,16 +266,21 @@ def simulate_identity_observations(
         z = apply_global_drift(z, realized_center_xy, config.grid_shape, drift_coeffs)
 
         nuisance_terms = _scenario_nuisance_terms(config, index)
-        effective_reference_bias = reference_bias_for_observation(config.reference_bias, index, config.metadata)
+        effective_reference_bias_scalar = reference_bias_for_observation(config.reference_bias, index, config.metadata)
+        
+        # If circular, we apply the scalar bias as a masked field
+        from stitching.trusted.instrument.bias import stationary_reference_bias
+        effective_reference_bias = stationary_reference_bias(
+            tile_shape, 
+            effective_reference_bias_scalar, 
+            radius_fraction=radius_frac
+        )
 
         z = apply_reference_bias(z, effective_reference_bias)
         z = apply_reference_bias(z, static_inst_bias) # Static instrument field-dependent bias
         z = apply_nuisance_terms(z, nuisance_terms)
         z = add_gaussian_noise(z, config.gaussian_noise_std, seed=config.seed + index)
         z = add_outliers(z, config.outlier_fraction, magnitude=1.0, seed=config.seed + index, valid_mask=valid_mask)
-        
-        slope_retrace = float(config.metadata.get("slope_retrace_error", 0.0))
-        z = apply_retrace_error(z, config.retrace_error, slope_magnitude=slope_retrace)
         
         z = np.where(valid_mask, z, np.nan)
 
@@ -271,7 +293,7 @@ def simulate_identity_observations(
                 center_xy=realized_center_xy,
                 global_shape=config.grid_shape,
                 rotation_deg=rotation_deg,
-                reference_bias=effective_reference_bias,
+                reference_bias=effective_reference_bias_scalar,
                 nuisance_terms=nuisance_terms,
                 metadata={
                     "simulator": "identity",

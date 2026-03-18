@@ -35,13 +35,13 @@ def test_zernike_basis_circular_masking() -> None:
     # n=1, m=1 is x-tilt
     z = generate_zernike_surface(np.array([0, 1.0]), shape, indexing="ansi")
     
-    # Outside unit disk should be exactly zero
+    # Outside unit disk should be exactly NaN
     yy, xx = np.indices(shape, dtype=float)
     x = 2.0 * xx / (shape[1] - 1) - 1.0
     y = 2.0 * yy / (shape[0] - 1) - 1.0
     mask = x**2 + y**2 <= 1.0
-    
-    assert np.all(z[~mask] == 0.0)
+
+    assert np.all(np.isnan(z[~mask]))
     assert np.any(z[mask] != 0.0)
 
 

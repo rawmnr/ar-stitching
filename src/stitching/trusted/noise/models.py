@@ -20,6 +20,9 @@ def apply_optical_psf(z: np.ndarray, sigma_pixels: float) -> np.ndarray:
 
     if sigma_pixels <= 0.0:
         return z
+    # Note: caller should handle NaNs (e.g. by filling with 0.0 before filtering)
+    # Simulator does this for truth, but instrument/detector noise functions
+    # might need to be careful if they add NaNs too early.
     return gaussian_filter(z, sigma=sigma_pixels)
 
 
@@ -140,11 +143,20 @@ def outlier_magnitude_scale(z: np.ndarray, valid_mask: np.ndarray | None = None)
         values = values[np.asarray(valid_mask, dtype=bool)]
     if values.size == 0:
         return 1.0
-    centered = values - float(np.mean(values))
-    scale = float(np.std(centered))
+    
+    # Use nan-aware stats to be robust to instrument-frame NaNs (pupils)
+    mu = np.nanmean(values)
+    if np.isnan(mu):
+        return 1.0
+    centered = values - float(mu)
+    scale = float(np.nanstd(centered))
     if scale <= OUTLIER_SCALE_EPS:
-        span = float(np.max(values) - np.min(values))
-        scale = span / 2.0
+        valid_values = values[~np.isnan(values)]
+        if valid_values.size > 0:
+            span = float(np.max(valid_values) - np.min(valid_values))
+            scale = span / 2.0
+        else:
+            scale = 0.0
     return max(1.0, scale)
 
 
@@ -162,6 +174,9 @@ def add_outliers(
         return result
     rng = np.random.default_rng(seed)
     candidate_mask = np.ones(result.shape, dtype=bool) if valid_mask is None else np.asarray(valid_mask, dtype=bool)
+    # Also exclude NaNs from being chosen as outliers
+    candidate_mask = candidate_mask & ~np.isnan(result)
+    
     candidate_count = int(candidate_mask.sum())
     count = int(round(candidate_count * fraction))
     if count == 0:
@@ -201,6 +216,7 @@ def add_mid_spatial_ripples(
             harmonic = np.sin(4.0 * np.pi * freq * axis_coords + 0.5 * phase)
             axis_field += base_wave + harmonic_weight * harmonic
 
+        # Internal axis field is clean, standard mean/std is fine
         axis_field -= float(np.mean(axis_field))
         axis_std = float(np.std(axis_field))
         if axis_std > 0.0:
@@ -239,11 +255,13 @@ def add_low_frequency_noise(
     effective_coeffs = coeffs * powers * magnitude
 
     # Generate the noise surface (circular support assumed for Zernike modes)
+    # Explicitly fill with 0.0 to avoid punching holes into rectangular z
     noise_surface = generate_zernike_surface(
         effective_coeffs,
         z.shape,
         indexing=indexing,
         backend="internal",
+        fill_value=0.0
     )
     
     return np.asarray(z, dtype=float) + noise_surface
@@ -256,12 +274,17 @@ def apply_retrace_error(z: np.ndarray, magnitude: float, slope_magnitude: float 
     
     # 1. Simple scalar-based retrace
     if magnitude != 0.0:
-        centered = result - float(np.mean(result))
-        result += float(magnitude) * centered * np.abs(centered)
+        # Use nan-aware mean for centering
+        mu = np.nanmean(result)
+        if not np.isnan(mu):
+            centered = result - float(mu)
+            result += float(magnitude) * centered * np.abs(centered)
         
     # 2. Slope-based retrace (local gradient dependent)
     if slope_magnitude != 0.0:
-        gy, gx = np.gradient(result)
+        # Temporarily fill NaNs for gradient calculation to avoid boundary artifacts
+        temp_z = np.where(np.isnan(result), 0.0, result)
+        gy, gx = np.gradient(temp_z)
         slope = np.sqrt(gx**2 + gy**2)
         # Model: error proportional to local slope and local surface value
         result += float(slope_magnitude) * slope * result

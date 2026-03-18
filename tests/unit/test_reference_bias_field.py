@@ -36,7 +36,7 @@ def test_zernike_reference_bias_is_applied() -> None:
     diff = obs.z - truth.z
     
     # Check that it's not a scalar (unless only Z1 is provided)
-    assert np.std(diff) > 0.0
+    assert np.nanstd(diff) > 0.0
     
     # Check shape
     assert diff.shape == config.tile_shape

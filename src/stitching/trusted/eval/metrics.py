@@ -98,8 +98,8 @@ def _empty_intersection_penalty(reference: np.ndarray, candidate: np.ndarray) ->
     """Return a finite conservative penalty when no valid overlap exists."""
 
     amplitude = max(
-        float(np.max(np.abs(reference), initial=0.0)),
-        float(np.max(np.abs(candidate), initial=0.0)),
+        float(np.nanmax(np.abs(reference), initial=0.0)),
+        float(np.nanmax(np.abs(candidate), initial=0.0)),
     )
     return max(EMPTY_INTERSECTION_PENALTY_FLOOR, amplitude)
 
@@ -110,19 +110,48 @@ def _remove_piston_tilt(vals: np.ndarray, mask: np.ndarray) -> np.ndarray:
         return vals
         
     yy, xx = np.indices(mask.shape, dtype=float)
-    y_vals = yy[mask]
-    x_vals = xx[mask]
+    
+    if vals.shape == mask.shape:
+        # Called with 2D array
+        y_vals = yy[mask]
+        x_vals = xx[mask]
+        z_vals_1d = vals[mask]
+    else:
+        # Called with 1D array of already-masked values
+        y_vals = yy[mask]
+        x_vals = xx[mask]
+        z_vals_1d = vals
+        
+    valid_idx = ~np.isnan(z_vals_1d)
+    if not np.any(valid_idx):
+        return vals
+        
+    y_vals_clean = y_vals[valid_idx]
+    x_vals_clean = x_vals[valid_idx]
+    z_vals_clean = z_vals_1d[valid_idx]
     
     # A * x = vals where x = [tilt_x, tilt_y, piston]
-    A = np.column_stack([x_vals, y_vals, np.ones_like(x_vals)])
+    A = np.column_stack([x_vals_clean, y_vals_clean, np.ones_like(x_vals_clean)])
     
     # Use lstsq for robust plane fitting
     try:
-        coeff, _, _, _ = np.linalg.lstsq(A, vals, rcond=None)
-        return vals - A @ coeff
+        coeff, _, _, _ = np.linalg.lstsq(A, z_vals_clean, rcond=None)
+        
+        if vals.shape == mask.shape:
+             # Full array case
+             y_all = yy[mask]
+             x_all = xx[mask]
+             A_all = np.column_stack([x_all, y_all, np.ones_like(x_all)])
+             result = vals.copy()
+             result[mask] = vals[mask] - (A_all @ coeff)
+             return result
+        else:
+             # Flat values case
+             A_all = np.column_stack([x_vals, y_vals, np.ones_like(x_vals)])
+             return vals - (A_all @ coeff)
     except np.linalg.LinAlgError:
         # Fallback to piston removal if tilt fitting fails
-        return vals - float(np.mean(vals))
+        return vals - float(np.nanmean(vals))
 
 
 def signal_metrics(
@@ -151,18 +180,36 @@ def signal_metrics(
 
     # Raw metrics (including tilt and piston)
     delta_raw = cand_vals - ref_vals
-    rms_raw = float(np.sqrt(np.mean(delta_raw**2)))
-    mae_raw = float(np.mean(np.abs(delta_raw)))
+    # Use nan-aware metrics if NaNs are present (should not be in ref_vals/cand_vals if intersection is correct)
+    delta_raw_clean = delta_raw[~np.isnan(delta_raw)]
+    if delta_raw_clean.size == 0:
+         penalty = _empty_intersection_penalty(reference, candidate)
+         return {
+            "rms_on_valid_intersection": penalty,
+            "mae_on_valid_intersection": penalty,
+            "rms_detrended": penalty,
+            "mae_detrended": penalty,
+            "tilt_piston_rms": 0.0,
+            "hf_retention": 0.0,
+        }
+        
+    rms_raw = float(np.sqrt(np.mean(delta_raw_clean**2)))
+    mae_raw = float(np.mean(np.abs(delta_raw_clean)))
 
     # Detrended metrics (remove global piston and tilt between recon and truth)
     # We fit the plane to the difference to find the best global alignment
     delta_detrended = _remove_piston_tilt(delta_raw, valid_intersection)
-    rms_detrended = float(np.sqrt(np.mean(delta_detrended**2)))
-    mae_detrended = float(np.mean(np.abs(delta_detrended)))
+    delta_detrended_clean = delta_detrended[~np.isnan(delta_detrended)]
     
-    # Calculate how much tilt/piston was removed (magnitude of the fit)
-    plane_fit = delta_raw - delta_detrended
-    tilt_piston_rms = float(np.sqrt(np.mean(plane_fit**2)))
+    if delta_detrended_clean.size > 0:
+        rms_detrended = float(np.sqrt(np.mean(delta_detrended_clean**2)))
+        mae_detrended = float(np.mean(np.abs(delta_detrended_clean)))
+        plane_fit = delta_raw_clean - delta_detrended_clean if delta_raw_clean.size == delta_detrended_clean.size else 0.0
+        tilt_piston_rms = float(np.sqrt(np.mean(plane_fit**2))) if isinstance(plane_fit, np.ndarray) else 0.0
+    else:
+        rms_detrended = rms_raw
+        mae_detrended = mae_raw
+        tilt_piston_rms = 0.0
 
     hf_retention = _high_frequency_retention(reference, candidate, valid_intersection)
     
@@ -244,37 +291,6 @@ def build_eval_report(
     if use_detrended:
         notes.append("acceptance_using_detrended_metrics")
         
-    return EvalReport(
-        scenario_id=config.scenario_id,
-        geometry_metrics=geom,
-        signal_metrics=sig,
-        mismatch_metrics=mismatch,
-        runtime_sec=runtime_sec,
-        accepted=accepted,
-        config=config,
-        truth=truth,
-        reconstruction=candidate,
-        notes=tuple(notes),
-    )
-    
-    mismatch = compute_mismatch_metrics(observations)
-
-    mae_threshold = signal_acceptance_threshold(config, truth.z, truth.valid_mask)
-    accepted = (
-        not support_violation
-        and geom["footprint_iou"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["footprint_iou_min"]
-        and geom["valid_pixel_recall"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["valid_pixel_recall_min"]
-        and geom["valid_pixel_precision"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["valid_pixel_precision_min"]
-        and geom["largest_component_ratio"] >= GEOMETRY_ACCEPTANCE_THRESHOLDS["largest_component_ratio_min"]
-        and geom["hole_ratio"] <= GEOMETRY_ACCEPTANCE_THRESHOLDS["hole_ratio_max"]
-        and sig["mae_on_valid_intersection"] <= mae_threshold
-    )
-    notes: list[str] = []
-    if support_violation:
-        notes.append("reconstruction_valid_mask_exceeds_observed_support")
-    if not np.any(truth.valid_mask & candidate.valid_mask):
-        notes.append("empty_valid_intersection_penalized")
-    notes.append(f"mae_acceptance_threshold={mae_threshold:.12g}")
     return EvalReport(
         scenario_id=config.scenario_id,
         geometry_metrics=geom,

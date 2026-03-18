@@ -8,21 +8,39 @@ import numpy as np
 from scipy.special import factorial
 
 
-def _normalized_pupil_grid(shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _normalized_pupil_grid(
+    shape: tuple[int, int], 
+    radius_fraction: float | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return normalized x/y coordinates and unit-disk mask."""
 
     rows, cols = shape
     yy, xx = np.indices(shape, dtype=float)
-    x = 2.0 * xx / max(cols - 1, 1) - 1.0
-    y = 2.0 * yy / max(rows - 1, 1) - 1.0
+    
+    if radius_fraction is None:
+        # Legacy behavior: scale to full extent [-1, 1]
+        x = 2.0 * xx / max(cols - 1, 1) - 1.0
+        y = 2.0 * yy / max(rows - 1, 1) - 1.0
+    else:
+        # Scale according to radius_fraction of min(shape)
+        # Consistent with circular_pupil_mask in footprint.py
+        cy = (rows - 1) / 2.0
+        cx = (cols - 1) / 2.0
+        r_pixel = min(rows, cols) * radius_fraction
+        x = (xx - cx) / r_pixel
+        y = (yy - cy) / r_pixel
+        
     mask = x**2 + y**2 <= 1.0
     return x, y, mask
 
 
-def _polar_pupil_grid(shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _polar_pupil_grid(
+    shape: tuple[int, int], 
+    radius_fraction: float | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return normalized polar coordinates and a unit-disk mask."""
 
-    x, y, mask = _normalized_pupil_grid(shape)
+    x, y, mask = _normalized_pupil_grid(shape, radius_fraction=radius_fraction)
     rho = np.sqrt(x**2 + y**2)
     theta = np.arctan2(y, x)
     return rho, theta, mask
@@ -127,11 +145,17 @@ def _zernike_mode(n: int, m: int, rho: np.ndarray, theta: np.ndarray) -> np.ndar
     return radial * np.sin(abs(m) * theta)
 
 
-def _generate_with_internal(coefficients: np.ndarray, shape: tuple[int, int], indexing: str) -> np.ndarray:
+def _generate_with_internal(
+    coefficients: np.ndarray, 
+    shape: tuple[int, int], 
+    indexing: str,
+    radius_fraction: float | None = None,
+    fill_value: float = np.nan,
+) -> np.ndarray:
     """Generate Zernike surfaces with an internal SciPy-backed implementation."""
 
     coeffs = np.asarray(coefficients, dtype=float).ravel()
-    rho, theta, mask = _polar_pupil_grid(shape)
+    rho, theta, mask = _polar_pupil_grid(shape, radius_fraction=radius_fraction)
     surface = np.zeros(shape, dtype=float)
 
     for coefficient, (n, m) in zip(coeffs, _index_pairs(indexing, len(coeffs)), strict=False):
@@ -139,7 +163,7 @@ def _generate_with_internal(coefficients: np.ndarray, shape: tuple[int, int], in
             continue
         surface = surface + float(coefficient) * _zernike_mode(n, m, rho, theta)
 
-    return np.where(mask, surface, 0.0)
+    return np.where(mask, surface, fill_value)
 
 
 def _resolve_backend(backend: str) -> str:
@@ -161,11 +185,17 @@ def _resolve_backend(backend: str) -> str:
     return "internal"
 
 
-def _generate_with_optiland(coefficients: np.ndarray, shape: tuple[int, int], indexing: str) -> np.ndarray:
+def _generate_with_optiland(
+    coefficients: np.ndarray, 
+    shape: tuple[int, int], 
+    indexing: str,
+    radius_fraction: float | None = None,
+    fill_value: float = np.nan,
+) -> np.ndarray:
     """Call an Optiland backend if available."""
 
     optiland = import_module("optiland")
-    x, y, mask = _normalized_pupil_grid(shape)
+    x, y, mask = _normalized_pupil_grid(shape, radius_fraction=radius_fraction)
 
     if hasattr(optiland, "Zernike"):
         generator = optiland.Zernike(coefficients=coefficients.tolist(), indexing=indexing)
@@ -173,7 +203,7 @@ def _generate_with_optiland(coefficients: np.ndarray, shape: tuple[int, int], in
     else:
         raise ImportError("Installed Optiland package does not expose the expected Zernike API.")
 
-    return np.where(mask, surface, 0.0)
+    return np.where(mask, surface, fill_value)
 
 
 def _generate_with_prysm(coefficients: np.ndarray, shape: tuple[int, int], indexing: str) -> np.ndarray:
@@ -190,6 +220,8 @@ def generate_zernike_surface(
     shape: tuple[int, int],
     indexing: str = "noll",
     backend: str = "auto",
+    radius_fraction: float | None = None,
+    fill_value: float = np.nan,
 ) -> np.ndarray:
     """Generate a circular-pupil surface using a supported backend adapter.
 
@@ -205,9 +237,17 @@ def generate_zernike_surface(
     coeffs = np.asarray(coefficients, dtype=float)
 
     if resolved_backend == "internal":
-        return _generate_with_internal(coeffs, shape, indexing)
+        return _generate_with_internal(
+            coeffs, shape, indexing, 
+            radius_fraction=radius_fraction, 
+            fill_value=fill_value
+        )
     if resolved_backend == "optiland":
-        return _generate_with_optiland(coeffs, shape, indexing)
+        return _generate_with_optiland(
+            coeffs, shape, indexing, 
+            radius_fraction=radius_fraction, 
+            fill_value=fill_value
+        )
     if resolved_backend == "prysm":
         return _generate_with_prysm(coeffs, shape, indexing)
     raise ValueError(f"Unsupported Zernike backend '{resolved_backend}'.")

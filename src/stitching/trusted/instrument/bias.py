@@ -5,18 +5,32 @@ from __future__ import annotations
 import numpy as np
 
 
-def stationary_reference_bias(shape: tuple[int, int], bias: float) -> np.ndarray:
+def stationary_reference_bias(
+    shape: tuple[int, int], 
+    bias: float,
+    radius_fraction: float | None = None,
+) -> np.ndarray:
     """Create a detector-frame stationary bias field."""
 
-    return np.full(shape, bias, dtype=float)
+    field = np.full(shape, bias, dtype=float)
+    if radius_fraction is not None:
+        from stitching.trusted.surface.footprint import circular_pupil_mask
+        mask = circular_pupil_mask(shape, radius_fraction=radius_fraction)
+        field = np.where(mask, field, np.nan)
+    return field
 
 
 def generate_reference_bias_field(
     shape: tuple[int, int],
     coefficients: np.ndarray | None = None,
+    radius_fraction: float | None = None,
 ) -> np.ndarray:
     """Generate a static field-dependent reference bias from Zernike coefficients."""
     if coefficients is None or len(coefficients) == 0:
+        if radius_fraction is not None:
+            from stitching.trusted.surface.footprint import circular_pupil_mask
+            mask = circular_pupil_mask(shape, radius_fraction=radius_fraction)
+            return np.where(mask, 0.0, np.nan)
         return np.zeros(shape, dtype=float)
     
     from stitching.trusted.bases.zernike import generate_zernike_surface
@@ -25,7 +39,9 @@ def generate_reference_bias_field(
         coefficients, 
         shape, 
         indexing="noll", 
-        backend="internal"
+        backend="internal",
+        radius_fraction=radius_fraction,
+        fill_value=np.nan
     )
     return np.asarray(bias_field, dtype=float)
 
