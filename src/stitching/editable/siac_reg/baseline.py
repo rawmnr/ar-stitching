@@ -126,7 +126,7 @@ def phase_correlation_constrained(ref, mov, mask=None, max_shift=MAX_EXPECTED_SH
 
 
 class JointPoseOptimizer:
-    """Robust joint pose optimization with validation."""
+    """Robust joint pose optimization using overlap residuals."""
     
     def __init__(self, observations, config):
         self.observations = observations
@@ -136,86 +136,133 @@ class JointPoseOptimizer:
         self.tile_shape = observations[0].tile_shape
         
     def optimize_poses(self, max_iter=2):
-        """Returns validated pose corrections [n_obs x 2] (dy, dx)."""
-        print(f"  Optimizing {self.n_obs} poses...", flush=True)
+        """Returns pose corrections [n_obs x 2] (dy, dx)."""
+        print(f"  Optimizing {self.n_obs} poses via overlap residuals...", flush=True)
         
-        pairwise_shifts = []
+        # Build overlap equations directly - like in the solver
+        # For each pair of observations, the overlap constraint is:
+        # z_i(x,y) - z_j(x,y) ≈ 0 (in overlap region)
+        # This gives us equations for the relative pose
+        
+        pairwise_deltas = []
         
         for i in range(self.n_obs):
             for j in range(i + 1, self.n_obs):
-                overlap = self._extract_overlap(i, j)
+                # Extract overlap region
+                overlap = self._extract_overlap_simple(i, j)
                 if overlap is None:
                     continue
                 
-                ref, mov, mask = overlap
+                ref, mov, mask, offset_i, offset_j = overlap
                 
-                dy, dx, corr = phase_correlation_constrained(ref, mov, mask)
-                
-                shift_magnitude = np.sqrt(dy**2 + dx**2)
-                
-                if shift_magnitude > MAX_EXPECTED_SHIFT_PX or corr < MIN_CORRELATION_PEAK:
-                    print(f"    Pair {i}-{j}: REJECTED (shift={shift_magnitude:.2f}, corr={corr:.3f})", flush=True)
+                if np.sum(mask) < 50:
                     continue
                 
-                pairwise_shifts.append({
-                    'i': i, 'j': j,
-                    'dy': dy, 'dx': dx,
-                    'corr': corr,
-                    'weight': corr
-                })
-                print(f"    Pair {i}-{j}: dy={dy:.4f}, dx={dx:.4f}, corr={corr:.3f} OK", flush=True)
+                # Compute mean difference in overlap - this is a rough estimate
+                diff = ref - mov
+                mean_diff = np.mean(diff[mask])
+                
+                # This is too noisy - use gradient-based approach
+                # Instead, we'll use the residuals from the alignment solver
+                # But for now, just use identity and let the solver handle it
+                pass
         
-        corrections = self._solve_pose_graph(pairwise_shifts)
+        # Alternative: Use the fact that pose errors manifest as tilts in overlap
+        # Fit a plane to the difference: diff = a + b*x + c*y
+        # The tilts (b, c) give us the relative pose error
+        
+        corrections = np.zeros((self.n_obs, 2), dtype=float)
+        
+        # Solve using all pairwise tilt measurements
+        tilt_measurements = []
+        
+        for i in range(self.n_obs):
+            for j in range(i + 1, self.n_obs):
+                overlap = self._extract_overlap_simple(i, j)
+                if overlap is None:
+                    continue
+                    
+                ref, mov, mask, offset_i, offset_j = overlap
+                
+                # Fit plane to difference
+                yy, xx = np.where(mask)
+                if len(yy) < 20:
+                    continue
+                    
+                diff_vals = (ref - mov)[yy, xx]
+                
+                # Fit: diff = a + tilt_y * y + tilt_x * x
+                A = np.column_stack([np.ones_like(yy), yy.astype(float), xx.astype(float)])
+                try:
+                    coeff, _, _, _ = np.linalg.lstsq(A, diff_vals, rcond=None)
+                    tilt_y, tilt_x = coeff[1], coeff[2]
+                    
+                    # Convert tilt to translation
+                    # For small angles, translation = tilt * scale
+                    scale = 10.0  # Empirical scale factor
+                    dy_ij = tilt_y * scale
+                    dx_ij = tilt_x * scale
+                    
+                    tilt_measurements.append({
+                        'i': i, 'j': j,
+                        'dy': dy_ij, 'dx': dx_ij,
+                        'weight': 1.0 / (np.std(diff_vals) + 1e-6)
+                    })
+                except:
+                    pass
+        
+        if tilt_measurements:
+            corrections = self._solve_pose_graph(tilt_measurements)
+        
         corrections -= corrections.mean(axis=0)
         
         max_correction = np.max(np.abs(corrections))
         print(f"  Final corrections: max={max_correction:.4f} px", flush=True)
         
-        if max_correction > MAX_EXPECTED_SHIFT_PX:
-            print(f"  WARNING: Corrections too large, resetting to zero", flush=True)
-            corrections = np.zeros((self.n_obs, 2))
+        # Clamp large corrections
+        if max_correction > 2.0:
+            print(f"  WARNING: Corrections too large, clamping", flush=True)
+            corrections = np.clip(corrections, -2.0, 2.0)
         
         return corrections
     
-    def _solve_pose_graph(self, pairwise_shifts):
-        """Solve for absolute poses from pairwise measurements."""
-        if not pairwise_shifts:
+    def _solve_pose_graph(self, measurements):
+        """Solve for absolute poses from tilt measurements."""
+        if not measurements:
             return np.zeros((self.n_obs, 2))
         
-        n_pairs = len(pairwise_shifts)
+        n_meas = len(measurements)
         
         A_rows, A_cols, A_data = [], [], []
         b_y, b_x = [], []
         weights = []
         
-        for row, pair in enumerate(pairwise_shifts):
-            i, j = pair['i'], pair['j']
+        for row, m in enumerate(measurements):
+            i, j = m['i'], m['j']
             
             A_rows.extend([row, row])
             A_cols.extend([i, j])
             A_data.extend([1.0, -1.0])
-            b_y.append(pair['dy'])
-            
-            A_rows.extend([n_pairs + row, n_pairs + row])
-            A_cols.extend([self.n_obs + i, self.n_obs + j])
-            A_data.extend([1.0, -1.0])
-            b_x.append(pair['dx'])
-            
-            weights.extend([pair['weight'], pair['weight']])
+            b_y.append(m['dy'])
+            b_x.append(m['dx'])
+            weights.extend([m['weight'], m['weight']])
         
+        # Gauge constraint
         for i in range(self.n_obs):
-            A_rows.append(2 * n_pairs)
+            A_rows.append(len(measurements))
             A_cols.append(i)
             A_data.append(1.0)
+            b_y.append(0.0)
             
-            A_rows.append(2 * n_pairs + 1)
+            A_rows.append(len(measurements) + 1)
             A_cols.append(self.n_obs + i)
             A_data.append(1.0)
+            b_x.append(0.0)
         
-        n_equations = 2 * n_pairs + 2
+        n_eq = len(measurements) + 2
         n_vars = 2 * self.n_obs
         
-        A = sp.csr_matrix((A_data, (A_rows, A_cols)), shape=(n_equations, n_vars))
+        A = sp.csr_matrix((A_data, (A_rows, A_cols)), shape=(n_eq, n_vars))
         b = np.concatenate([b_y, b_x, [0.0, 0.0]])
         weights = np.array(weights + [1.0, 1.0])
         
@@ -231,7 +278,7 @@ class JointPoseOptimizer:
         
         return corrections
     
-    def _extract_overlap(self, idx_i, idx_j):
+    def _extract_overlap_simple(self, idx_i, idx_j):
         """Extract overlapping region between two observations."""
         obs_i = self.observations[idx_i]
         obs_j = self.observations[idx_j]
@@ -241,7 +288,6 @@ class JointPoseOptimizer:
         cy_i, cx_i = obs_i.center_xy[1], obs_i.center_xy[0]
         cy_j, cx_j = obs_j.center_xy[1], obs_j.center_xy[0]
         
-        # Use integer tile positions
         top_i = int(cy_i - rows // 2)
         left_i = int(cx_i - cols // 2)
         top_j = int(cy_j - rows // 2)
@@ -252,37 +298,23 @@ class JointPoseOptimizer:
         g_bottom = min(top_i + rows, top_j + rows)
         g_right = min(left_i + cols, left_j + cols)
         
-        overlap_height = g_bottom - g_top
-        overlap_width = g_right - g_left
+        overlap_h = g_bottom - g_top
+        overlap_w = g_right - g_left
         
-        if overlap_height < 20 or overlap_width < 20:
+        if overlap_h < 10 or overlap_w < 10:
             return None
         
         li_top = g_top - top_i
         li_left = g_left - left_i
-        li_bottom = li_top + overlap_height
-        li_right = li_left + overlap_width
-        
         lj_top = g_top - top_j
         lj_left = g_left - left_j
-        lj_bottom = lj_top + overlap_height
-        lj_right = lj_left + overlap_width
         
-        # Make sure indices are valid
-        if li_top < 0 or li_left < 0 or lj_top < 0 or lj_left < 0:
-            return None
-        if li_bottom > rows or li_right > cols or lj_bottom > rows or lj_right > cols:
-            return None
+        ref = obs_i.z[li_top:li_top+overlap_h, li_left:li_left+overlap_w]
+        mov = obs_j.z[lj_top:lj_top+overlap_h, lj_left:lj_left+overlap_w]
+        mask = obs_i.valid_mask[li_top:li_top+overlap_h, li_left:li_left+overlap_w] & \
+               obs_j.valid_mask[lj_top:lj_top+overlap_h, lj_left:lj_left+overlap_w]
         
-        ref_patch = obs_i.z[li_top:li_bottom, li_left:li_right].copy()
-        mov_patch = obs_j.z[lj_top:lj_bottom, lj_left:lj_right].copy()
-        mask_patch = (obs_i.valid_mask[li_top:li_bottom, li_left:li_right] & 
-                     obs_j.valid_mask[lj_top:lj_bottom, lj_left:lj_right])
-        
-        if np.sum(mask_patch) < 200:
-            return None
-        
-        return ref_patch, mov_patch, mask_patch
+        return ref, mov, mask, (top_i, left_i), (top_j, left_j)
 
 
 class CandidateStitcher:
@@ -299,7 +331,7 @@ class CandidateStitcher:
                 observed_support_mask=np.array([], dtype=bool)
             )
 
-        enable_registration = False  # Disabled due to guardrail issues
+        enable_registration = False  # Keep disabled - needs more work
         
         if enable_registration and len(observations) > 1:
             optimizer = JointPoseOptimizer(observations, config)
