@@ -805,30 +805,48 @@ class CandidateStitcher:
 
         for i, obs in enumerate(observations):
             rows, cols = obs.tile_shape
-            top = int(round(obs.center_xy[1] - (rows - 1) / 2.0))
-            left = int(round(obs.center_xy[0] - (cols - 1) / 2.0))
-
-            yy, xx = np.where(obs.valid_mask)
-            if yy.size == 0:
-                continue
-            gy, gx = yy + top, xx + left
-            valid_global = (gy >= 0) & (gy < global_shape[0]) & (gx >= 0) & (gx < global_shape[1])
-
-            yy, xx = yy[valid_global], xx[valid_global]
-            gy, gx = gy[valid_global], gx[valid_global]
-            if yy.size == 0:
-                continue
+            yy, xx = np.indices(obs.tile_shape, dtype=float)
             y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
             x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
 
             working_mask = self._get_eroded_mask(obs.valid_mask)
             weight_map = self._smooth_feather_weights(working_mask)
-            all_obs_indices.append(np.full(len(yy), i, dtype=int))
-            all_flat_indices.append(gy * global_shape[1] + gx)
-            all_z.append(obs.z[yy, xx] - reference_map[yy, xx])
-            all_xn.append(x_norm)
-            all_yn.append(y_norm)
-            all_w.append(weight_map[yy, xx])
+            local_values = obs.z - reference_map
+
+            gy, gx, sampled_z, sampled_w, sampled_mask = self._project_local_field_to_global(
+                obs,
+                local_values,
+                weight_map,
+                obs.valid_mask,
+            )
+            if gy.size == 0:
+                continue
+
+            _, _, sampled_xn, _, _ = self._project_local_field_to_global(
+                obs,
+                x_norm,
+                np.ones_like(weight_map, dtype=float),
+                obs.valid_mask,
+            )
+            _, _, sampled_yn, _, _ = self._project_local_field_to_global(
+                obs,
+                y_norm,
+                np.ones_like(weight_map, dtype=float),
+                obs.valid_mask,
+            )
+
+            valid = sampled_mask & np.isfinite(sampled_z) & (sampled_w > 1e-6)
+            if not np.any(valid):
+                continue
+
+            gy_v = gy[valid]
+            gx_v = gx[valid]
+            all_obs_indices.append(np.full(int(np.sum(valid)), i, dtype=int))
+            all_flat_indices.append(gy_v * global_shape[1] + gx_v)
+            all_z.append(sampled_z[valid])
+            all_xn.append(sampled_xn[valid])
+            all_yn.append(sampled_yn[valid])
+            all_w.append(sampled_w[valid])
 
         if not all_obs_indices:
             return np.zeros((n_obs, 4))
