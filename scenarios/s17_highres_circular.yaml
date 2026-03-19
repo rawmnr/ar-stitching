@@ -7,24 +7,24 @@ pattern_type: annular
 overlap_fraction: 0.3
 baseline_name: mean
 seed: 18
-gaussian_noise_std: 0.03
-outlier_fraction: 0.0001
+gaussian_noise_std: 1
+outlier_fraction: 0
 reference_bias: 1
 retrace_error: 0.005
 metadata:
   truth_basis: zernike
-  truth_coefficients: [0.0, 0.0, 0.0, 0.5, 0.3, -0.2, 0.1, 0.05, -0.1, 0.3, 0.3, 0.1, 0.05, -0.1]
+  truth_coefficients: [0.0, 0.0, 0.0, 5, 6, -3, 3, 3, -1, 1, 3, -2, 0.05, -0.1]
   truth_pupil: circular
   truth_radius_fraction: 0.48
   detector_pupil: circular
   detector_radius_fraction: 0.48
-  detector_edge_roll_off: 3.0
+  detector_edge_roll_off: 1
   optical_psf_sigma: 0.8
-  mid_spatial_ripple_std: 0.04
-  low_frequency_noise_std: 0.04
-  realized_pose_bias_xy: [0.1, -0.1]
-  realized_pose_drift_std: 0.02
-  realized_pose_error_std: 0.01
+  mid_spatial_ripple_std: 1
+  low_frequency_noise_std: 0.5
+  realized_pose_bias_xy: [1, -1]
+  realized_pose_drift_std: 0.8
+  realized_pose_error_std: 1
   geometric_retrace_error: 0.1
   interpolation_order: 3
   ignore_piston: true
@@ -37,9 +37,9 @@ metadata:
   reference_bias_coefficients: [
     0.0, 0.05, -0.03,  # Z1-Z3 (Piston, Tip, Tilt)
     0, 0, -0, # Z4-Z6 (Defocus, Astig x2)
-    0.115, -0.01, 0.008, 0.15, # Z7-Z10 (Coma x2, Trefoil x2)
-    0.003, -0.002, 0.004, 0.001, 0.002, # Z11-Z15
-    0.001, -0.001, 0.001, 0.001, 0.001, 0.001, # Z16-Z21
-    0.0005, -0.0005, 0.0005, 0.0005, 0.0005, 0.0005, 0.0005, # Z22-Z28
+    1, 3, 1, 1, # Z7-Z10 (Coma x2, Trefoil x2)
+    0.5, -0.002, 0.004, 0.001, 0.002, # Z11-Z15
+    0.001, -0.001, 0.5, 0.001, 0.001, 0.001, # Z16-Z21
+    0.0005, -0.5, 0.0005, 0.0005, 1, 0.0005, 0.0005, # Z22-Z28
     0.02, -0.1002, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002 # Z29-Z36
   ]
