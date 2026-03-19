@@ -74,6 +74,8 @@ def main():
     baselines = {
         "GLS Standard": "src/stitching/editable/gls/baseline.py",
         "GLS Robust (Huber)": "src/stitching/editable/gls_robust/baseline.py",
+        "Subaper (Legacy)": "src/stitching/editable/subaper/baseline.py",
+        "NEOSS (Legacy)": "src/stitching/editable/neoss/baseline.py",
         "SCS (Calibration)": "src/stitching/editable/scs/baseline.py",
         "SIAC (Alternating)": "src/stitching/editable/siac/baseline.py",
         "SIAC+Reg (SubPixel)": "src/stitching/editable/siac_reg/baseline.py",
