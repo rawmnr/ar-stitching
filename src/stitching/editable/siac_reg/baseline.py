@@ -1,4 +1,8 @@
-"""SIAC with Robust Sub-Pixel Registration."""
+"""SIAC with Leave-One-Out Pose Estimation.
+
+Uses leave-one-out fused predictions to estimate pose errors without
+attenuation bias. Per-observation robust gradient solve with IRLS.
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -6,315 +10,16 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy import ndimage
 from scipy.ndimage import map_coordinates
-from scipy.fft import fft2, ifft2, fftshift
 from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertureObservation
 
 EDGE_EROSION_PX = 2
 FEATHER_WIDTH = 0.20
 SIGMA_FILTER = 0.7
-
-MAX_EXPECTED_SHIFT_PX = 1.0
-MIN_CORRELATION_PEAK = 0.08
-
-
-def remove_plane(data, mask=None):
-    """Remove piston and tilt from data for better correlation."""
-    if mask is None:
-        mask = ~np.isnan(data)
-    
-    if not np.any(mask):
-        return data.copy()
-    
-    yy, xx = np.indices(data.shape, dtype=float)
-    y_masked = yy[mask].ravel()
-    x_masked = xx[mask].ravel()
-    z_masked = data[mask].ravel()
-    
-    A = np.column_stack([np.ones_like(y_masked), x_masked, y_masked])
-    coeff, *_ = np.linalg.lstsq(A, z_masked, rcond=None)
-    
-    result = data.copy()
-    plane = coeff[0] + coeff[1] * xx + coeff[2] * yy
-    result[mask] = data[mask] - plane[mask]
-    
-    return result
-
-
-def apply_window(data, mask=None):
-    """Apply Hanning window to reduce edge effects in FFT."""
-    rows, cols = data.shape
-    win_y = np.hanning(rows)
-    win_x = np.hanning(cols)
-    window = np.outer(win_y, win_x)
-    
-    result = data.copy()
-    if mask is not None:
-        result[~mask] = 0.0
-    
-    return result * window
-
-
-def phase_correlation_constrained(ref, mov, mask=None, max_shift=MAX_EXPECTED_SHIFT_PX):
-    """Robust phase correlation with constrained search region."""
-    if mask is None:
-        mask = ~np.isnan(ref) & ~np.isnan(mov)
-    
-    ref_detrend = remove_plane(ref, mask)
-    mov_detrend = remove_plane(mov, mask)
-    
-    ref_work = np.nan_to_num(ref_detrend, nan=0.0)
-    mov_work = np.nan_to_num(mov_detrend, nan=0.0)
-    
-    ref_work = apply_window(ref_work, mask)
-    mov_work = apply_window(mov_work, mask)
-    
-    ref_std = np.std(ref_work[mask]) if np.any(mask) else 1.0
-    mov_std = np.std(mov_work[mask]) if np.any(mask) else 1.0
-    
-    if ref_std < 1e-10 or mov_std < 1e-10:
-        return 0.0, 0.0, 0.0
-    
-    ref_work = (ref_work - np.mean(ref_work[mask])) / ref_std
-    mov_work = (mov_work - np.mean(mov_work[mask])) / mov_std
-    
-    F_ref = fft2(ref_work)
-    F_mov = fft2(mov_work)
-    
-    cross_power = F_ref * np.conj(F_mov)
-    cross_power /= np.abs(cross_power) + 1e-10
-    
-    correlation = np.real(ifft2(cross_power))
-    correlation = fftshift(correlation)
-    
-    rows, cols = correlation.shape
-    center_y, center_x = rows // 2, cols // 2
-    
-    yy, xx = np.indices(correlation.shape)
-    dist_from_center = np.sqrt((yy - center_y)**2 + (xx - center_x)**2)
-    search_mask = dist_from_center <= max_shift + 1
-    
-    correlation_masked = correlation.copy()
-    correlation_masked[~search_mask] = -np.inf
-    
-    peak_idx = np.unravel_index(np.argmax(correlation_masked), correlation.shape)
-    peak_value = correlation[peak_idx]
-    
-    py, px = peak_idx
-    
-    if 1 <= py < rows - 1 and 1 <= px < cols - 1:
-        y_vals = correlation[py-1:py+2, px]
-        if y_vals[0] < y_vals[1] and y_vals[2] < y_vals[1]:
-            dy = (y_vals[0] - y_vals[2]) / (2 * (y_vals[0] + y_vals[2] - 2 * y_vals[1]) + 1e-10)
-        else:
-            dy = 0.0
-        
-        x_vals = correlation[py, px-1:px+2]
-        if x_vals[0] < x_vals[1] and x_vals[2] < x_vals[1]:
-            dx = (x_vals[0] - x_vals[2]) / (2 * (x_vals[0] + x_vals[2] - 2 * x_vals[1]) + 1e-10)
-        else:
-            dx = 0.0
-        
-        dy = np.clip(dy, -0.5, 0.5)
-        dx = np.clip(dx, -0.5, 0.5)
-    else:
-        dy, dx = 0.0, 0.0
-    
-    shift_y = (py + dy) - center_y
-    shift_x = (px + dx) - center_x
-    
-    return float(shift_y), float(shift_x), float(peak_value)
-
-
-class JointPoseOptimizer:
-    """Robust joint pose optimization using overlap residuals."""
-    
-    def __init__(self, observations, config):
-        self.observations = observations
-        self.config = config
-        self.n_obs = len(observations)
-        self.global_shape = observations[0].global_shape
-        self.tile_shape = observations[0].tile_shape
-        
-    def optimize_poses(self, max_iter=2):
-        """Returns pose corrections [n_obs x 2] (dy, dx)."""
-        print(f"  Optimizing {self.n_obs} poses via overlap residuals...", flush=True)
-        
-        # Build overlap equations directly - like in the solver
-        # For each pair of observations, the overlap constraint is:
-        # z_i(x,y) - z_j(x,y) ≈ 0 (in overlap region)
-        # This gives us equations for the relative pose
-        
-        pairwise_deltas = []
-        
-        for i in range(self.n_obs):
-            for j in range(i + 1, self.n_obs):
-                # Extract overlap region
-                overlap = self._extract_overlap_simple(i, j)
-                if overlap is None:
-                    continue
-                
-                ref, mov, mask, offset_i, offset_j = overlap
-                
-                if np.sum(mask) < 50:
-                    continue
-                
-                # Compute mean difference in overlap - this is a rough estimate
-                diff = ref - mov
-                mean_diff = np.mean(diff[mask])
-                
-                # This is too noisy - use gradient-based approach
-                # Instead, we'll use the residuals from the alignment solver
-                # But for now, just use identity and let the solver handle it
-                pass
-        
-        # Alternative: Use the fact that pose errors manifest as tilts in overlap
-        # Fit a plane to the difference: diff = a + b*x + c*y
-        # The tilts (b, c) give us the relative pose error
-        
-        corrections = np.zeros((self.n_obs, 2), dtype=float)
-        
-        # Solve using all pairwise tilt measurements
-        tilt_measurements = []
-        
-        for i in range(self.n_obs):
-            for j in range(i + 1, self.n_obs):
-                overlap = self._extract_overlap_simple(i, j)
-                if overlap is None:
-                    continue
-                    
-                ref, mov, mask, offset_i, offset_j = overlap
-                
-                # Fit plane to difference
-                yy, xx = np.where(mask)
-                if len(yy) < 20:
-                    continue
-                    
-                diff_vals = (ref - mov)[yy, xx]
-                
-                # Fit: diff = a + tilt_y * y + tilt_x * x
-                A = np.column_stack([np.ones_like(yy), yy.astype(float), xx.astype(float)])
-                try:
-                    coeff, _, _, _ = np.linalg.lstsq(A, diff_vals, rcond=None)
-                    tilt_y, tilt_x = coeff[1], coeff[2]
-                    
-                    # Convert tilt to translation
-                    # For small angles, translation = tilt * scale
-                    scale = 10.0  # Empirical scale factor
-                    dy_ij = tilt_y * scale
-                    dx_ij = tilt_x * scale
-                    
-                    tilt_measurements.append({
-                        'i': i, 'j': j,
-                        'dy': dy_ij, 'dx': dx_ij,
-                        'weight': 1.0 / (np.std(diff_vals) + 1e-6)
-                    })
-                except:
-                    pass
-        
-        if tilt_measurements:
-            corrections = self._solve_pose_graph(tilt_measurements)
-        
-        corrections -= corrections.mean(axis=0)
-        
-        max_correction = np.max(np.abs(corrections))
-        print(f"  Final corrections: max={max_correction:.4f} px", flush=True)
-        
-        # Clamp large corrections
-        if max_correction > 2.0:
-            print(f"  WARNING: Corrections too large, clamping", flush=True)
-            corrections = np.clip(corrections, -2.0, 2.0)
-        
-        return corrections
-    
-    def _solve_pose_graph(self, measurements):
-        """Solve for absolute poses from tilt measurements."""
-        if not measurements:
-            return np.zeros((self.n_obs, 2))
-        
-        n_meas = len(measurements)
-        
-        A_rows, A_cols, A_data = [], [], []
-        b_y, b_x = [], []
-        weights = []
-        
-        for row, m in enumerate(measurements):
-            i, j = m['i'], m['j']
-            
-            A_rows.extend([row, row])
-            A_cols.extend([i, j])
-            A_data.extend([1.0, -1.0])
-            b_y.append(m['dy'])
-            b_x.append(m['dx'])
-            weights.extend([m['weight'], m['weight']])
-        
-        # Gauge constraint
-        for i in range(self.n_obs):
-            A_rows.append(len(measurements))
-            A_cols.append(i)
-            A_data.append(1.0)
-            b_y.append(0.0)
-            
-            A_rows.append(len(measurements) + 1)
-            A_cols.append(self.n_obs + i)
-            A_data.append(1.0)
-            b_x.append(0.0)
-        
-        n_eq = len(measurements) + 2
-        n_vars = 2 * self.n_obs
-        
-        A = sp.csr_matrix((A_data, (A_rows, A_cols)), shape=(n_eq, n_vars))
-        b = np.concatenate([b_y, b_x, [0.0, 0.0]])
-        weights = np.array(weights + [1.0, 1.0])
-        
-        W = sp.diags(np.sqrt(weights))
-        A_w = W @ A
-        b_w = W @ b
-        
-        result, *_ = spla.lsqr(A_w, b_w, damp=1e-6)
-        
-        corrections = np.zeros((self.n_obs, 2))
-        corrections[:, 0] = result[:self.n_obs]
-        corrections[:, 1] = result[self.n_obs:]
-        
-        return corrections
-    
-    def _extract_overlap_simple(self, idx_i, idx_j):
-        """Extract overlapping region between two observations."""
-        obs_i = self.observations[idx_i]
-        obs_j = self.observations[idx_j]
-        
-        rows, cols = self.tile_shape
-        
-        cy_i, cx_i = obs_i.center_xy[1], obs_i.center_xy[0]
-        cy_j, cx_j = obs_j.center_xy[1], obs_j.center_xy[0]
-        
-        top_i = int(cy_i - rows // 2)
-        left_i = int(cx_i - cols // 2)
-        top_j = int(cy_j - rows // 2)
-        left_j = int(cx_j - cols // 2)
-        
-        g_top = max(top_i, top_j)
-        g_left = max(left_i, left_j)
-        g_bottom = min(top_i + rows, top_j + rows)
-        g_right = min(left_i + cols, left_j + cols)
-        
-        overlap_h = g_bottom - g_top
-        overlap_w = g_right - g_left
-        
-        if overlap_h < 10 or overlap_w < 10:
-            return None
-        
-        li_top = g_top - top_i
-        li_left = g_left - left_i
-        lj_top = g_top - top_j
-        lj_left = g_left - left_j
-        
-        ref = obs_i.z[li_top:li_top+overlap_h, li_left:li_left+overlap_w]
-        mov = obs_j.z[lj_top:lj_top+overlap_h, lj_left:lj_left+overlap_w]
-        mask = obs_i.valid_mask[li_top:li_top+overlap_h, li_left:li_left+overlap_w] & \
-               obs_j.valid_mask[lj_top:lj_top+overlap_h, lj_left:lj_left+overlap_w]
-        
-        return ref, mov, mask, (top_i, left_i), (top_j, left_j)
+GRADIENT_FLOOR = 0.01
+POSE_DAMPING_LADDER = [1.0, 0.5, 0.25, 0.1]
+MAX_POSE_ITER = 5
+MAX_TOTAL_POSE_SHIFT = 0.75
+POSE_IMPROVEMENT_RATIO = 0.995
 
 
 class CandidateStitcher:
@@ -331,32 +36,181 @@ class CandidateStitcher:
                 observed_support_mask=np.array([], dtype=bool)
             )
 
-        enable_registration = False  # Keep disabled - needs more work
-        
-        if enable_registration and len(observations) > 1:
-            optimizer = JointPoseOptimizer(observations, config)
-            pose_corrections = optimizer.optimize_poses()
-            
-            if np.max(np.abs(pose_corrections)) < MAX_EXPECTED_SHIFT_PX:
-                registered_observations = self._apply_pose_corrections(
-                    observations, pose_corrections
-                )
-            else:
-                print("  Pose corrections rejected - using original poses")
-                registered_observations = observations
-                pose_corrections = np.zeros((len(observations), 2))
-        else:
-            registered_observations = observations
-            pose_corrections = np.zeros((len(observations), 2))
-        
+        n_obs = len(observations)
         tile_shape = observations[0].tile_shape
-        reference_map = np.zeros(tile_shape, dtype=float)
-        nuisances = self._solve_global_alignment(registered_observations, reference_map)
+        global_shape = observations[0].global_shape
+        zero_pose = np.zeros((n_obs, 2), dtype=float)
 
-        max_outer_iter = 6
-        for iteration in range(max_outer_iter):
-            fused_z, fused_mask, _ = self._fuse_observations(
+        base_reference_map, base_nuisances, base_fused_result = self._run_siac_outer_loop(
+            observations=observations,
+            tile_shape=tile_shape,
+            n_outer_iter=6,
+        )
+        base_objective = self._compute_loo_objective(
+            observations,
+            base_fused_result,
+            base_nuisances,
+            base_reference_map,
+            global_shape,
+            zero_pose,
+        )
+
+        pose_corrections = np.zeros((n_obs, 2), dtype=float)
+
+        for reg_iter in range(MAX_POSE_ITER):
+            registered_observations = self._apply_pose_corrections(observations, pose_corrections)
+            reference_map, nuisances, fused_result = self._run_siac_outer_loop(
                 observations=registered_observations,
+                tile_shape=tile_shape,
+                n_outer_iter=3,
+            )
+            current_objective = self._compute_loo_objective(
+                registered_observations,
+                fused_result,
+                nuisances,
+                reference_map,
+                global_shape,
+                zero_pose,
+            )
+
+            delta_poses, accepted = self._estimate_poses_loo(
+                registered_observations,
+                fused_result,
+                nuisances,
+                reference_map,
+                global_shape,
+            )
+
+            if delta_poses is not None and accepted:
+                delta_poses -= delta_poses.mean(axis=0)
+                trial_pose_corrections = pose_corrections + delta_poses
+
+                max_total = float(np.max(np.abs(trial_pose_corrections)))
+                if max_total > MAX_TOTAL_POSE_SHIFT:
+                    scale = MAX_TOTAL_POSE_SHIFT / max(max_total, 1e-12)
+                    delta_poses *= scale
+                    trial_pose_corrections = pose_corrections + delta_poses
+
+                trial_registered = self._apply_pose_corrections(observations, trial_pose_corrections)
+                trial_reference_map, trial_nuisances, trial_fused_result = self._run_siac_outer_loop(
+                    observations=trial_registered,
+                    tile_shape=tile_shape,
+                    n_outer_iter=3,
+                )
+                trial_objective = self._compute_loo_objective(
+                    trial_registered,
+                    trial_fused_result,
+                    trial_nuisances,
+                    trial_reference_map,
+                    global_shape,
+                    zero_pose,
+                )
+
+                if (
+                    current_objective is not None
+                    and trial_objective is not None
+                    and np.isfinite(current_objective)
+                    and np.isfinite(trial_objective)
+                    and trial_objective < current_objective * POSE_IMPROVEMENT_RATIO
+                ):
+                    pose_corrections = trial_pose_corrections
+                    max_delta = np.max(np.abs(delta_poses))
+                    print(
+                        f"  Reg iter {reg_iter}: delta = {max_delta:.4f} px "
+                        f"(accepted, obj {current_objective:.5f} -> {trial_objective:.5f})",
+                        flush=True,
+                    )
+
+                    if max_delta < 0.02:
+                        break
+                else:
+                    current_text = 'nan' if current_objective is None else f'{current_objective:.5f}'
+                    trial_text = 'nan' if trial_objective is None else f'{trial_objective:.5f}'
+                    print(
+                        f"  Reg iter {reg_iter}: rejected candidate "
+                        f"(obj {current_text} -> {trial_text})",
+                        flush=True,
+                    )
+                    break
+            elif delta_poses is not None:
+                print(f"  Reg iter {reg_iter}: no improvement, stopping", flush=True)
+                break
+            else:
+                print(f"  Reg iter {reg_iter}: insufficient data", flush=True)
+                break
+
+        max_corr = np.max(np.abs(pose_corrections))
+        rms_corr = np.sqrt(np.mean(pose_corrections**2))
+        print(f"  Final pose corrections: max={max_corr:.3f}, rms={rms_corr:.3f}", flush=True)
+
+        registered_observations = self._apply_pose_corrections(observations, pose_corrections)
+        reference_map, nuisances, fused_result = self._run_siac_outer_loop(
+            observations=registered_observations,
+            tile_shape=tile_shape,
+            n_outer_iter=6,
+        )
+        final_objective = self._compute_loo_objective(
+            registered_observations,
+            fused_result,
+            nuisances,
+            reference_map,
+            global_shape,
+            zero_pose,
+        )
+
+        use_registered_solution = (
+            final_objective is not None
+            and base_objective is not None
+            and np.isfinite(final_objective)
+            and np.isfinite(base_objective)
+            and final_objective < base_objective * POSE_IMPROVEMENT_RATIO
+        )
+
+        if not use_registered_solution:
+            pose_corrections = zero_pose
+            reference_map = base_reference_map
+            nuisances = base_nuisances
+            fused_result = base_fused_result
+            print("  Final selection: fallback to SIAC baseline state", flush=True)
+        else:
+            print(
+                f"  Final selection: kept registered solution "
+                f"(obj {base_objective:.5f} -> {final_objective:.5f})",
+                flush=True,
+            )
+
+        z = fused_result['fused_z']
+        valid_mask = fused_result['valid_mask']
+        support = self._physical_support_mask(observations)
+
+        ref_rms = float(np.sqrt(np.mean(reference_map[observations[0].valid_mask] ** 2))) if np.any(observations[0].valid_mask) else 0.0
+
+        return ReconstructionSurface(
+            z=z,
+            valid_mask=valid_mask,
+            source_observation_ids=tuple(o.observation_id for o in observations),
+            observed_support_mask=support,
+            metadata={
+                "method": "siac_iterative_pose",
+                "reference_map_rms": ref_rms,
+                "pose_corrections": pose_corrections,
+                "pose_correction_rms": float(np.sqrt(np.mean(pose_corrections**2))),
+                "instrument_calibration": reference_map,
+            },
+        )
+
+    def _run_siac_outer_loop(
+        self,
+        observations: tuple[SubApertureObservation, ...],
+        tile_shape: tuple[int, int],
+        n_outer_iter: int,
+    ) -> tuple[np.ndarray, np.ndarray, dict]:
+        reference_map = np.zeros(tile_shape, dtype=float)
+        nuisances = self._solve_global_alignment(observations, reference_map)
+
+        for _ in range(n_outer_iter):
+            fused_z, fused_mask, _ = self._fuse_observations(
+                observations=observations,
                 nuisances=nuisances,
                 reference_map=reference_map,
             )
@@ -364,77 +218,474 @@ class CandidateStitcher:
                 break
 
             estimated_reference = self._estimate_reference_map(
-                observations=registered_observations,
+                observations=observations,
                 fused_z=fused_z,
                 fused_mask=fused_mask,
                 nuisances=nuisances,
             )
             estimated_nuisances = self._solve_global_alignment(
-                observations=registered_observations,
+                observations=observations,
                 reference_map=estimated_reference,
             )
 
             reference_map = 0.5 * reference_map + 0.5 * estimated_reference
             nuisances = 0.5 * nuisances + 0.5 * estimated_nuisances
 
-        z, valid_mask, support = self._fuse_observations(
-            observations=registered_observations,
-            nuisances=nuisances,
-            reference_map=reference_map,
+        fused_result = self._fuse_observations_with_contrib(
+            observations,
+            nuisances,
+            reference_map,
         )
+        return reference_map, nuisances, fused_result
 
-        ref_rms = float(np.sqrt(np.mean(reference_map[observations[0].valid_mask] ** 2))) if np.any(observations[0].valid_mask) else 0.0
+    def _physical_support_mask(
+        self,
+        observations: tuple[SubApertureObservation, ...],
+    ) -> np.ndarray:
+        support = np.zeros(observations[0].global_shape, dtype=bool)
+        for obs in observations:
+            rows, cols = obs.tile_shape
+            top = int(round(float(obs.center_xy[1]) - (rows - 1) / 2.0))
+            left = int(round(float(obs.center_xy[0]) - (cols - 1) / 2.0))
+            gy_s = max(0, top)
+            gy_e = min(obs.global_shape[0], top + rows)
+            gx_s = max(0, left)
+            gx_e = min(obs.global_shape[1], left + cols)
+            ly_s = max(0, -top)
+            lx_s = max(0, -left)
+            ly_e = ly_s + (gy_e - gy_s)
+            lx_e = lx_s + (gx_e - gx_s)
+            if gy_e > gy_s and gx_e > gx_s:
+                support[gy_s:gy_e, gx_s:gx_e][obs.valid_mask[ly_s:ly_e, lx_s:lx_e]] = True
+        return support
+
+    def _local_to_global_coords(
+        self,
+        obs: SubApertureObservation,
+        yy_local: np.ndarray,
+        xx_local: np.ndarray,
+        center_xy: tuple[float, float] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rows, cols = obs.tile_shape
+        center_x, center_y = obs.center_xy if center_xy is None else center_xy
+        angle_rad = np.deg2rad(obs.rotation_deg)
+        cos_a = float(np.cos(angle_rad))
+        sin_a = float(np.sin(angle_rad))
+
+        yy_rel = yy_local - (rows - 1) / 2.0
+        xx_rel = xx_local - (cols - 1) / 2.0
+        xx_global = center_x + xx_rel * cos_a - yy_rel * sin_a
+        yy_global = center_y + xx_rel * sin_a + yy_rel * cos_a
+        return yy_global, xx_global
+
+    def _global_to_local_coords(
+        self,
+        obs: SubApertureObservation,
+        yy_global: np.ndarray,
+        xx_global: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rows, cols = obs.tile_shape
+        angle_rad = np.deg2rad(obs.rotation_deg)
+        cos_a = float(np.cos(angle_rad))
+        sin_a = float(np.sin(angle_rad))
+
+        dx = xx_global - obs.center_xy[0]
+        dy = yy_global - obs.center_xy[1]
+        xx_rel = dx * cos_a + dy * sin_a
+        yy_rel = -dx * sin_a + dy * cos_a
+        xx_local = xx_rel + (cols - 1) / 2.0
+        yy_local = yy_rel + (rows - 1) / 2.0
+        return yy_local, xx_local
+
+    def _sample_global_array(
+        self,
+        values: np.ndarray,
+        yy_global: np.ndarray,
+        xx_global: np.ndarray,
+        *,
+        order: int = 1,
+        cval: float = 0.0,
+    ) -> np.ndarray:
+        coords = np.array([yy_global.ravel(), xx_global.ravel()])
+        sampled = map_coordinates(values, coords, order=order, mode="constant", cval=cval)
+        return sampled.reshape(yy_global.shape)
+
+    def _project_local_field_to_global(
+        self,
+        obs: SubApertureObservation,
+        local_values: np.ndarray,
+        local_weights: np.ndarray,
+        valid_mask: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        global_shape = obs.global_shape
+        rows, cols = obs.tile_shape
+        angle_rad = np.deg2rad(obs.rotation_deg)
+        cos_a = abs(float(np.cos(angle_rad)))
+        sin_a = abs(float(np.sin(angle_rad)))
+
+        half_h = 0.5 * ((rows - 1) * cos_a + (cols - 1) * sin_a)
+        half_w = 0.5 * ((cols - 1) * cos_a + (rows - 1) * sin_a)
+        cy = float(obs.center_xy[1])
+        cx = float(obs.center_xy[0])
+
+        gy_s = max(0, int(np.floor(cy - half_h - 1.0)))
+        gy_e = min(global_shape[0], int(np.ceil(cy + half_h + 1.0)) + 1)
+        gx_s = max(0, int(np.floor(cx - half_w - 1.0)))
+        gx_e = min(global_shape[1], int(np.ceil(cx + half_w + 1.0)) + 1)
+
+        if gy_e <= gy_s or gx_e <= gx_s:
+            empty_shape = (0, 0)
+            return np.array([], dtype=int), np.array([], dtype=int), np.zeros(empty_shape), np.zeros(empty_shape), np.zeros(empty_shape, dtype=bool)
+
+        gy, gx = np.indices((gy_e - gy_s, gx_e - gx_s), dtype=float)
+        gy += gy_s
+        gx += gx_s
+        yy_local, xx_local = self._global_to_local_coords(obs, gy, gx)
+        coords = np.array([yy_local.ravel(), xx_local.ravel()])
+
+        filled_values = np.where(valid_mask, local_values, 0.0)
+        sampled_values = map_coordinates(filled_values, coords, order=1, mode="constant", cval=0.0).reshape(gy.shape)
+        sampled_weights = map_coordinates(local_weights, coords, order=1, mode="constant", cval=0.0).reshape(gy.shape)
+        sampled_mask = map_coordinates(valid_mask.astype(float), coords, order=1, mode="constant", cval=0.0).reshape(gy.shape) >= 0.5
+        sampled_mask &= sampled_weights > 1e-6
+        return gy.astype(int), gx.astype(int), sampled_values, sampled_weights, sampled_mask
+
+    def _fuse_observations_with_contrib(
+        self,
+        observations: tuple[SubApertureObservation, ...],
+        nuisances: np.ndarray,
+        reference_map: np.ndarray,
+    ) -> dict:
+        global_shape = observations[0].global_shape
+
+        sum_z = np.zeros(global_shape, dtype=float)
+        count = np.zeros(global_shape, dtype=float)
+        overlap_count = np.zeros(global_shape, dtype=int)
+        support = np.zeros(global_shape, dtype=bool)
+
+        contrib_sums = []
+        contrib_counts = []
+
+        for i, obs in enumerate(observations):
+            rows, cols = obs.tile_shape
+            yy, xx = np.indices(obs.tile_shape, dtype=float)
+            y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
+            x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
+
+            working_mask = self._get_eroded_mask(obs.valid_mask)
+            blend_weights = self._smooth_feather_weights(working_mask)
+
+            p, tip, tilt, _focus = nuisances[i]
+            model = p + tip * y_norm + tilt * x_norm
+            z_corr = obs.z - model - reference_map
+
+            gy, gx, sampled_values, sampled_weights, sampled_mask = self._project_local_field_to_global(
+                obs,
+                z_corr,
+                blend_weights,
+                obs.valid_mask,
+            )
+
+            contrib_sum = np.zeros(global_shape, dtype=float)
+            contrib_count = np.zeros(global_shape, dtype=float)
+            if gy.size == 0:
+                contrib_sums.append(contrib_sum)
+                contrib_counts.append(contrib_count)
+                continue
+
+            weighted_values = sampled_values * sampled_weights
+            contrib_sum[gy, gx] = np.where(sampled_mask, weighted_values, 0.0)
+            contrib_count[gy, gx] = np.where(sampled_mask, sampled_weights, 0.0)
+
+            valid_idx = sampled_mask
+            sum_z[gy[valid_idx], gx[valid_idx]] += weighted_values[valid_idx]
+            count[gy[valid_idx], gx[valid_idx]] += sampled_weights[valid_idx]
+            overlap_count[gy[valid_idx], gx[valid_idx]] += 1
+            support[gy[valid_idx], gx[valid_idx]] = True
+
+            contrib_sums.append(contrib_sum)
+            contrib_counts.append(contrib_count)
+
+        valid_mask = count > 0
+        z = np.full(global_shape, np.nan, dtype=float)
+        z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
+
+        return {
+            'fused_z': z,
+            'valid_mask': valid_mask,
+            'support': support,
+            'sum_z': sum_z,
+            'count': count,
+            'overlap_count': overlap_count,
+            'contrib_sums': contrib_sums,
+            'contrib_counts': contrib_counts,
+        }
+
+    def _estimate_poses_loo(
+        self,
+        observations: tuple,
+        fused_result: dict,
+        nuisances: np.ndarray,
+        reference_map: np.ndarray,
+        global_shape: tuple,
+    ) -> tuple[np.ndarray | None, bool]:
+        n_obs = len(observations)
+
+        sum_z = fused_result['sum_z']
+        count = fused_result['count']
+        overlap_count = fused_result['overlap_count']
+        contrib_sums = fused_result['contrib_sums']
+        contrib_counts = fused_result['contrib_counts']
+        fused_z = np.nan_to_num(fused_result['fused_z'], nan=0.0)
+        fused_valid = fused_result['valid_mask'].astype(float)
+
+        eps = 1e-12
+        loo_threshold = 0.1
+
+        delta_poses = np.zeros((n_obs, 2), dtype=float)
+        debug_info = []
+
+        for i, obs in enumerate(observations):
+            rows, cols = obs.tile_shape
+            working_mask = self._get_eroded_mask(obs.valid_mask)
+            yy, xx = np.where(working_mask)
+            if yy.size == 0:
+                continue
+
+            yy_g, xx_g = self._local_to_global_coords(obs, yy.astype(float), xx.astype(float))
+            valid_global = (
+                (yy_g >= 2.0) & (yy_g < global_shape[0] - 2.0) &
+                (xx_g >= 2.0) & (xx_g < global_shape[1] - 2.0)
+            )
+            if not np.any(valid_global):
+                continue
+
+            yy_v = yy[valid_global]
+            xx_v = xx[valid_global]
+            yy_g = yy_g[valid_global]
+            xx_g = xx_g[valid_global]
+
+            loo_sum = self._sample_global_array(sum_z - contrib_sums[i], yy_g, xx_g, order=1)
+            loo_w = self._sample_global_array(count - contrib_counts[i], yy_g, xx_g, order=1)
+            overlap_local = self._sample_global_array(overlap_count.astype(float), yy_g, xx_g, order=1)
+
+            valid_loo = (loo_w > loo_threshold) & (overlap_local >= 1.5)
+            if not np.any(valid_loo):
+                continue
+
+            yy_v = yy_v[valid_loo]
+            xx_v = xx_v[valid_loo]
+            yy_g = yy_g[valid_loo]
+            xx_g = xx_g[valid_loo]
+            loo_sum = loo_sum[valid_loo]
+            loo_w = loo_w[valid_loo]
+            pred_loo = loo_sum / np.maximum(loo_w, eps)
+
+            p, tip, tilt, _ = nuisances[i]
+            y_norm = 2.0 * yy_v / max(rows - 1, 1) - 1.0
+            x_norm = 2.0 * xx_v / max(cols - 1, 1) - 1.0
+            model = p + tip * y_norm + tilt * x_norm
+            z_local = obs.z[yy_v, xx_v]
+            ref_local = reference_map[yy_v, xx_v]
+            residual = z_local - model - ref_local - pred_loo
+
+            center_valid = self._sample_global_array(fused_valid, yy_g, xx_g, order=1)
+            up_valid = self._sample_global_array(fused_valid, yy_g - 1.0, xx_g, order=1)
+            down_valid = self._sample_global_array(fused_valid, yy_g + 1.0, xx_g, order=1)
+            left_valid = self._sample_global_array(fused_valid, yy_g, xx_g - 1.0, order=1)
+            right_valid = self._sample_global_array(fused_valid, yy_g, xx_g + 1.0, order=1)
+
+            gz_y = 0.5 * (
+                self._sample_global_array(fused_z, yy_g + 1.0, xx_g, order=1)
+                - self._sample_global_array(fused_z, yy_g - 1.0, xx_g, order=1)
+            )
+            gz_x = 0.5 * (
+                self._sample_global_array(fused_z, yy_g, xx_g + 1.0, order=1)
+                - self._sample_global_array(fused_z, yy_g, xx_g - 1.0, order=1)
+            )
+            grad_mag = np.sqrt(gz_y ** 2 + gz_x ** 2)
+
+            valid_grad = (
+                np.isfinite(residual)
+                & np.isfinite(gz_y)
+                & np.isfinite(gz_x)
+                & (grad_mag > GRADIENT_FLOOR)
+                & (center_valid > 0.75)
+                & (up_valid > 0.75)
+                & (down_valid > 0.75)
+                & (left_valid > 0.75)
+                & (right_valid > 0.75)
+            )
+            if not np.any(valid_grad):
+                continue
+
+            delta_i = self._solve_per_obs_pose_irls(
+                residual[valid_grad],
+                gz_y[valid_grad],
+                gz_x[valid_grad],
+                grad_mag[valid_grad],
+            )
+            if delta_i is not None:
+                delta_poses[i] = delta_i
+                debug_info.append((i, np.linalg.norm(delta_i), int(np.sum(valid_grad)), float(np.mean(grad_mag[valid_grad]))))
+
+        if np.all(np.abs(delta_poses) < 1e-6):
+            return None, False
+
+        if debug_info:
+            mean_delta = np.mean([d[1] for d in debug_info])
+            print(f"    LOO debug: obs_contribs={len(debug_info)}, mean_delta={mean_delta:.4f}, mean_grad={np.mean([d[3] for d in debug_info]):.6f}", flush=True)
+
+        delta_poses -= delta_poses.mean(axis=0)
+        max_abs = np.max(np.abs(delta_poses))
+        if max_abs < 0.01:
+            return delta_poses, False
+
+        for damping in POSE_DAMPING_LADDER:
+            candidate = delta_poses * damping
+            if np.max(np.abs(candidate)) <= 0.5:
+                return candidate, True
+
+        return delta_poses * 0.25, True
+
+    def _solve_per_obs_pose_irls(
+        self,
+        residual: np.ndarray,
+        gz_y: np.ndarray,
+        gz_x: np.ndarray,
+        grad_mag: np.ndarray,
+        n_irls_iter: int = 5,
+    ) -> np.ndarray | None:
+        if len(residual) < 10:
+            return None
         
-        return ReconstructionSurface(
-            z=z,
-            valid_mask=valid_mask,
-            source_observation_ids=tuple(o.observation_id for o in observations),
-            observed_support_mask=support,
-            metadata={
-                "method": "siac_robust_registration",
-                "reference_map_rms": ref_rms,
-                "pose_corrections": pose_corrections,
-                "pose_correction_rms": float(np.sqrt(np.mean(pose_corrections**2))),
-                "instrument_calibration": reference_map,
-            },
-        )
-    
-    def _apply_pose_corrections(self, observations, corrections):
-        """Apply sub-pixel pose corrections via interpolation."""
+        weights = np.maximum(grad_mag, GRADIENT_FLOOR)
+        weights = weights / np.max(weights)
+        
+        delta = np.zeros(2, dtype=float)
+        
+        for _ in range(n_irls_iter):
+            g = np.column_stack([-gz_y, -gz_x])
+            r = residual - g @ delta
+            
+            mad = np.median(np.abs(r - np.median(r)))
+            sigma = mad / 0.6745 if mad > 1e-12 else max(float(np.std(r)), 1e-6)
+            c = max(1.345 * sigma, 1e-6)
+            
+            abs_r = np.abs(r)
+            irls_w = np.where(abs_r <= c, 1.0, c / np.maximum(abs_r, 1e-12))
+            
+            combined_w = weights * irls_w
+            combined_w = np.sqrt(combined_w)
+            
+            Wg = combined_w[:, np.newaxis] * g
+            Wr = combined_w * r
+            
+            H = Wg.T @ Wg
+            b = Wg.T @ Wr
+            
+            H += 1e-6 * np.eye(2)
+            
+            try:
+                if np.linalg.cond(H) > 1e10:
+                    break
+                delta_new = np.linalg.solve(H, b)
+            except np.linalg.LinAlgError:
+                break
+            
+            if np.any(~np.isfinite(delta_new)):
+                break
+            
+            delta = delta_new
+        
+        return delta if np.any(np.abs(delta) > 1e-6) else np.zeros(2)
+
+    def _compute_loo_objective(
+        self,
+        observations: tuple,
+        fused_result: dict,
+        nuisances: np.ndarray,
+        reference_map: np.ndarray,
+        global_shape: tuple,
+        pose_delta: np.ndarray,
+    ) -> float | None:
+        sum_z = fused_result['sum_z']
+        count = fused_result['count']
+        overlap_count = fused_result['overlap_count']
+        contrib_sums = fused_result['contrib_sums']
+        contrib_counts = fused_result['contrib_counts']
+
+        eps = 1e-12
+        loo_threshold = 0.1
+        total_residual_sq = 0.0
+        total_count = 0
+
+        for i, obs in enumerate(observations):
+            rows, cols = obs.tile_shape
+            yy, xx = np.where(self._get_eroded_mask(obs.valid_mask))
+            if yy.size == 0:
+                continue
+
+            center_xy = (obs.center_xy[0] + pose_delta[i, 1], obs.center_xy[1] + pose_delta[i, 0])
+            yy_g, xx_g = self._local_to_global_coords(obs, yy.astype(float), xx.astype(float), center_xy=center_xy)
+            valid_global = (
+                (yy_g >= 0.0) & (yy_g < global_shape[0]) &
+                (xx_g >= 0.0) & (xx_g < global_shape[1])
+            )
+            if not np.any(valid_global):
+                continue
+
+            yy_v = yy[valid_global]
+            xx_v = xx[valid_global]
+            yy_g = yy_g[valid_global]
+            xx_g = xx_g[valid_global]
+
+            loo_sum = self._sample_global_array(sum_z - contrib_sums[i], yy_g, xx_g, order=1)
+            loo_w = self._sample_global_array(count - contrib_counts[i], yy_g, xx_g, order=1)
+            overlap_local = self._sample_global_array(overlap_count.astype(float), yy_g, xx_g, order=1)
+            valid_loo = (loo_w > loo_threshold) & (overlap_local >= 1.5)
+            if not np.any(valid_loo):
+                continue
+
+            pred_loo = loo_sum[valid_loo] / np.maximum(loo_w[valid_loo], eps)
+            p, tip, tilt, _ = nuisances[i]
+            y_norm = 2.0 * yy_v[valid_loo] / max(rows - 1, 1) - 1.0
+            x_norm = 2.0 * xx_v[valid_loo] / max(cols - 1, 1) - 1.0
+            model = p + tip * y_norm + tilt * x_norm
+            z_local = obs.z[yy_v[valid_loo], xx_v[valid_loo]]
+            ref_local = reference_map[yy_v[valid_loo], xx_v[valid_loo]]
+            residual = z_local - model - ref_local - pred_loo
+
+            valid = np.isfinite(residual)
+            if np.any(valid):
+                total_residual_sq += np.sum(residual[valid] ** 2)
+                total_count += int(np.sum(valid))
+
+        if total_count == 0:
+            return None
+        return total_residual_sq / total_count
+
+    def _apply_pose_corrections(self, observations: tuple, corrections: np.ndarray) -> tuple:
         registered = []
-        
         for i, obs in enumerate(observations):
             dy, dx = corrections[i]
-            
             if abs(dy) < 1e-6 and abs(dx) < 1e-6:
                 registered.append(obs)
                 continue
-            
-            yy, xx = np.indices(obs.tile_shape, dtype=float)
-            coords = np.array([yy - dy, xx - dx])
-            
-            z_corrected = map_coordinates(
-                np.nan_to_num(obs.z, nan=0.0), 
-                coords, order=3, mode='reflect'
-            )
-            
-            mask_corrected = map_coordinates(
-                obs.valid_mask.astype(float), 
-                coords, order=0, mode='constant', cval=0
-            ) > 0.5
-            
-            z_corrected[~mask_corrected] = np.nan
-            
+
             registered.append(SubApertureObservation(
                 observation_id=obs.observation_id,
-                z=z_corrected,
-                valid_mask=mask_corrected,
-                center_xy=obs.center_xy,
+                z=obs.z,
+                valid_mask=obs.valid_mask.copy(),
+                center_xy=(float(obs.center_xy[0] + dx), float(obs.center_xy[1] + dy)),
                 tile_shape=obs.tile_shape,
                 global_shape=obs.global_shape,
                 rotation_deg=obs.rotation_deg,
+                reference_bias=obs.reference_bias,
+                nuisance_terms=dict(obs.nuisance_terms),
+                metadata=dict(obs.metadata),
             ))
-        
+
         return tuple(registered)
 
     def _fuse_observations(
@@ -443,54 +694,12 @@ class CandidateStitcher:
         nuisances: np.ndarray,
         reference_map: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        global_shape = observations[0].global_shape
-        sum_z = np.zeros(global_shape, dtype=float)
-        count = np.zeros(global_shape, dtype=float)
-        support = np.zeros(global_shape, dtype=bool)
-
-        for i, obs in enumerate(observations):
-            rows, cols = obs.tile_shape
-            yy, xx = np.indices(obs.tile_shape, dtype=float)
-            y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
-            x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
-            
-            working_mask = self._get_eroded_mask(obs.valid_mask)
-            blend_weights = self._smooth_feather_weights(working_mask)
-
-            p, tip, tilt, _focus = nuisances[i]
-            model = p + tip * y_norm + tilt * x_norm
-            z_corr = obs.z - model - reference_map
-
-            cx, cy = obs.center_xy
-            top = int(round(cy - (rows - 1) / 2.0))
-            left = int(round(cx - (cols - 1) / 2.0))
-
-            gy_s, gy_e = max(0, top), min(global_shape[0], top + rows)
-            gx_s, gx_e = max(0, left), min(global_shape[1], left + cols)
-
-            ly_s, lx_s = max(0, -top), max(0, -left)
-            ly_e, lx_e = ly_s + (gy_e - gy_s), lx_s + (gx_e - gx_s)
-
-            if gy_e <= gy_s or gx_e <= gx_s:
-                continue
-
-            local_z = z_corr[ly_s:ly_e, lx_s:lx_e]
-            local_mask_orig = obs.valid_mask[ly_s:ly_e, lx_s:lx_e]
-            local_weights = blend_weights[ly_s:ly_e, lx_s:lx_e]
-
-            sum_view = sum_z[gy_s:gy_e, gx_s:gx_e]
-            count_view = count[gy_s:gy_e, gx_s:gx_e]
-            support_view = support[gy_s:gy_e, gx_s:gx_e]
-
-            weighted_local = local_z * local_weights
-            sum_view[local_mask_orig] += weighted_local[local_mask_orig]
-            count_view[local_mask_orig] += local_weights[local_mask_orig]
-            support_view[local_mask_orig] = True
-
-        valid_mask = count > 0
-        z = np.full(global_shape, np.nan, dtype=float)
-        z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
-        return z, valid_mask, support
+        fused_result = self._fuse_observations_with_contrib(
+            observations,
+            nuisances,
+            reference_map,
+        )
+        return fused_result['fused_z'], fused_result['valid_mask'], fused_result['support']
 
     def _estimate_reference_map(
         self,
@@ -503,6 +712,8 @@ class CandidateStitcher:
         sum_r = np.zeros(tile_shape, dtype=float)
         sum_w = np.zeros(tile_shape, dtype=float)
 
+        fused_filled = np.nan_to_num(fused_z, nan=0.0)
+        fused_mask_f = fused_mask.astype(float)
         samples = []
         residual_bank = []
 
@@ -515,31 +726,36 @@ class CandidateStitcher:
             p, tip, tilt, _focus = nuisances[i]
             model = p + tip * y_norm_full + tilt * x_norm_full
 
-            top = int(round(obs.center_xy[1] - (rows - 1) / 2.0))
-            left = int(round(obs.center_xy[0] - (cols - 1) / 2.0))
-
             yy, xx = np.where(obs.valid_mask)
             if yy.size == 0:
                 continue
 
-            gy = yy + top
-            gx = xx + left
+            yy_g, xx_g = self._local_to_global_coords(obs, yy.astype(float), xx.astype(float))
             valid_global = (
-                (gy >= 0)
-                & (gy < fused_z.shape[0])
-                & (gx >= 0)
-                & (gx < fused_z.shape[1])
-                & fused_mask[gy, gx]
+                (yy_g >= 0.0)
+                & (yy_g < fused_z.shape[0])
+                & (xx_g >= 0.0)
+                & (xx_g < fused_z.shape[1])
             )
             if not np.any(valid_global):
                 continue
 
             yy = yy[valid_global]
             xx = xx[valid_global]
-            gy = gy[valid_global]
-            gx = gx[valid_global]
+            yy_g = yy_g[valid_global]
+            xx_g = xx_g[valid_global]
+            mask_sample = self._sample_global_array(fused_mask_f, yy_g, xx_g, order=1)
+            valid_sample = mask_sample > 0.75
+            if not np.any(valid_sample):
+                continue
 
-            residual = obs.z[yy, xx] - model[yy, xx] - fused_z[gy, gx]
+            yy = yy[valid_sample]
+            xx = xx[valid_sample]
+            yy_g = yy_g[valid_sample]
+            xx_g = xx_g[valid_sample]
+            fused_sample = self._sample_global_array(fused_filled, yy_g, xx_g, order=1)
+
+            residual = obs.z[yy, xx] - model[yy, xx] - fused_sample
             residual_bank.append(residual)
             samples.append((yy, xx, residual))
 
@@ -557,19 +773,16 @@ class CandidateStitcher:
             weights = np.zeros_like(u, dtype=float)
             inside = np.abs(u) < 1.0
             weights[inside] = (1.0 - u[inside] ** 2) ** 2
-
             sum_r[yy, xx] += weights * residual
             sum_w[yy, xx] += weights
 
         reference_map = np.zeros(tile_shape, dtype=float)
         valid = sum_w > 0
         reference_map[valid] = sum_r[valid] / sum_w[valid]
-        
+
         ref_filled = np.where(valid, reference_map, 0.0)
         ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=SIGMA_FILTER)
-        
         reference_map[valid] = ref_smoothed[valid]
-
         return self._remove_degenerate_modes(reference_map, valid)
 
     def _solve_global_alignment(
