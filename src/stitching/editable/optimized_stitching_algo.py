@@ -8,7 +8,7 @@ from scipy import ndimage
 from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertureObservation
 
 # Configuration anti-artefacts
-EDGE_EROSION_PX = 0
+EDGE_EROSION_PX = 1
 FEATHER_WIDTH = 0.20
 SOLVE_FEATHER_WIDTH = 0.45
 
