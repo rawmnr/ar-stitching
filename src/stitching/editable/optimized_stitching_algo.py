@@ -9,7 +9,7 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 
 # Configuration anti-artefacts
 EDGE_EROSION_PX = 1
-FEATHER_WIDTH = 0.20
+FEATHER_WIDTH = 0.15
 SOLVE_FEATHER_WIDTH = 0.45
 
 class CandidateStitcher:
