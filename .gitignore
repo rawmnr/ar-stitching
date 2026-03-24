@@ -212,6 +212,9 @@ artifacts/*.png
 # Autoresearch artifacts
 experiments/runs/
 experiments/rejected/
+autoresearch/results.tsv
+autoresearch/insights.md
+autoresearch/run.log
 
 # Temporary and local files
 test.txt
