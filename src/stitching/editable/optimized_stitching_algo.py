@@ -10,6 +10,7 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 # Configuration anti-artefacts
 EDGE_EROSION_PX = 2
 FEATHER_WIDTH = 0.20
+SOLVE_FEATHER_WIDTH = 0.35
 
 class CandidateStitcher:
     def reconstruct(
@@ -41,10 +42,12 @@ class CandidateStitcher:
 
         all_obs_indices, all_flat_indices, all_z = [], [], []
         all_xn, all_yn, all_r_idx = [], [], []
+        all_solve_w = []
 
         for i, obs in enumerate(observations):
             top = int(round(obs.center_xy[1] - (tile_shape[0] - 1) / 2.0))
             left = int(round(obs.center_xy[0] - (tile_shape[1] - 1) / 2.0))
+            solve_weights = self._smooth_feather_weights(obs.valid_mask, feather_width=SOLVE_FEATHER_WIDTH)
             
             yy, xx = np.where(obs.valid_mask)
             gy, gx = yy + top, xx + left
@@ -62,6 +65,7 @@ class CandidateStitcher:
             all_xn.append(x_norm)
             all_yn.append(y_norm)
             all_r_idx.append(R_idx_map[yy, xx])
+            all_solve_w.append(solve_weights[yy, xx])
 
         obs_idx = np.concatenate(all_obs_indices)
         flat_idx = np.concatenate(all_flat_indices)
@@ -69,6 +73,7 @@ class CandidateStitcher:
         xn_vals = np.concatenate(all_xn)
         yn_vals = np.concatenate(all_yn)
         r_idx_vals = np.concatenate(all_r_idx)
+        solve_w_vals = np.concatenate(all_solve_w)
 
         sort_order = np.argsort(flat_idx)
         obs_idx = obs_idx[sort_order]
@@ -77,12 +82,14 @@ class CandidateStitcher:
         xn_vals = xn_vals[sort_order]
         yn_vals = yn_vals[sort_order]
         r_idx_vals = r_idx_vals[sort_order]
+        solve_w_vals = solve_w_vals[sort_order]
 
         diff = np.diff(flat_idx)
         boundaries = np.where(diff > 0)[0] + 1
         boundaries = np.concatenate(([0], boundaries, [len(flat_idx)]))
 
         rows_a, cols_a, data_a, b = [], [], [], []
+        row_weights = []
         row_count = 0
         
         # Build pairwise overlap equations
@@ -102,6 +109,7 @@ class CandidateStitcher:
                 oth_xn = xn_vals[j+1]
                 oth_yn = yn_vals[j+1]
                 oth_r = r_idx_vals[j+1]
+                row_weights.append(0.5 * (solve_w_vals[j] + solve_w_vals[j + 1]))
                 
                 # Nuisance terms for reference observation
                 rows_a.extend([row_count] * 3)
@@ -128,6 +136,8 @@ class CandidateStitcher:
 
         A = sp.csr_matrix((data_a, (rows_a, cols_a)), shape=(row_count, n_obs * n_params + n_R_pixels))
         b_np = np.array(b)
+        row_weights_np = np.asarray(row_weights, dtype=float) if row_weights else np.ones(row_count, dtype=float)
+        row_weights_np = np.clip(row_weights_np, 1e-6, None)
         
         # Constraints
         C_data, C_rows, C_cols = [], [], []
@@ -188,7 +198,7 @@ class CandidateStitcher:
         x = np.zeros(n_obs * n_params + n_R_pixels, dtype=float)
         
         for _ in range(5):
-            w_sqrt = np.sqrt(robust_weights)
+            w_sqrt = np.sqrt(robust_weights * row_weights_np)
             W = sp.diags(w_sqrt)
             A_w = W @ A
             b_w = w_sqrt * b_np
@@ -292,7 +302,7 @@ class CandidateStitcher:
         eroded = ndimage.binary_erosion(valid_mask, structure=structure, iterations=EDGE_EROSION_PX)
         return eroded
 
-    def _smooth_feather_weights(self, valid_mask: np.ndarray) -> np.ndarray:
+    def _smooth_feather_weights(self, valid_mask: np.ndarray, feather_width: float = FEATHER_WIDTH) -> np.ndarray:
         """Pondération cosinus avec dérivée nulle aux transitions."""
         weights = np.zeros(valid_mask.shape, dtype=float)
         if not np.any(valid_mask):
@@ -304,7 +314,7 @@ class CandidateStitcher:
             weights[valid_mask] = 1.0
             return weights
         
-        feather_dist = FEATHER_WIDTH * max_dist
+        feather_dist = feather_width * max_dist
         
         # Zone de transition: cosinus
         in_feather = valid_mask & (dist <= feather_dist)
