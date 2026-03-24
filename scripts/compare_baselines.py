@@ -60,6 +60,7 @@ def main():
     config = ScenarioConfig.from_yaml(scenario_path)
     tile_shape = config.tile_shape or (128, 128)
     ref_bias_coeffs = config.metadata.get("reference_bias_coefficients")
+    hf_amplitude = float(config.metadata.get("reference_bias_hf_amplitude", 0.0))
     
     radius_frac = None
     if config.metadata.get("detector_pupil") == "circular":
@@ -68,7 +69,9 @@ def main():
     ref_bias_field = generate_reference_bias_field(
         tile_shape, 
         ref_bias_coeffs,
-        radius_fraction=radius_frac
+        radius_fraction=radius_frac,
+        hf_amplitude=hf_amplitude,
+        seed=config.seed + 80_000
     )
     
     baselines = {

@@ -37,6 +37,13 @@ rotation_deg: [0.0]
 # Deterministic seed for all stochastic processes (noise, drift, jitter)
 seed: 42
 
+# Optional scalar detector reference bias
+reference_bias: 0.0
+
+# Geometric retrace correction at the observation level
+retrace_error: 0.0
+slope_retrace_error: 0.0
+
 # ------------------------------------------------------------------------------
 # 2. Trusted Truth Surface Generation
 # ------------------------------------------------------------------------------
@@ -50,7 +57,7 @@ truth_coefficients: [0.0, 0.0, 0.0, 0.5] # Focus (Z4)
 
 # Shape of the global truth mask (optional)
 truth_pupil: circular     # 'circular' or omit for full square grid
-truth_radius: 0.45        # Radius as fraction of min(grid_shape)
+truth_radius_fraction: 0.45        # Radius as fraction of min(grid_shape)
 
 # ------------------------------------------------------------------------------
 # 3. High-Fidelity Digital Twin Effects
@@ -67,7 +74,7 @@ optical_psf_sigma: 0.8
 surface_drift_coefficients: [0.0, 0.0, 0.0, 0.05, 0.02, -0.01, 0.01, 0.005]
 
 # Legacy single-mode focus bending (used if surface_drift_coefficients is omitted)
-# surface_bending_drift: 0.05
+surface_bending_drift: 0.0
 
 # Polishing marks (Mid-spatial frequency ripples)
 # RMS magnitude of periodic perturbations
@@ -100,6 +107,10 @@ geometric_retrace_error: 0.2        # Field distortion (coordinate shift at edge
 # High-frequency white noise
 gaussian_noise_std: 0.01
 
+# High-frequency reference bias artifacts (Grid, Rings, Defects)
+# Simulates manufacturing or calibration artifacts in the reference field.
+reference_bias_hf_amplitude: 0.2
+
 # Sparse outliers (dead pixels, spikes)
 outlier_fraction: 0.001
 
@@ -111,6 +122,7 @@ low_frequency_noise_std: 0.05
 subaperture_dc_step: 0.05 # Slowly varying piston drift
 subaperture_tip: 0.1
 subaperture_tilt: -0.05
+subaperture_focus: 0.0
 
 # Robustness evaluation: Random alignment terms per sub-aperture
 # alignment_term: Indices of terms to randomize
@@ -118,6 +130,11 @@ subaperture_tilt: -0.05
 # alignment_random_coeff: Standard deviation of the random variation
 alignment_term: [0, 1, 2]
 alignment_random_coeff: 10.0
+
+# Reference-bias drift and low-order detector-frame map placeholders
+reference_bias_drift_step: 0.0
+reference_bias_coefficients: []
+ignore_tilt: false
 
 # ------------------------------------------------------------------------------
 # 6. Evaluation Policy

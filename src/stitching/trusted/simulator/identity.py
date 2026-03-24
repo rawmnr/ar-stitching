@@ -185,15 +185,20 @@ def simulate_identity_observations(
 
     # 4. Pre-calculate static instrument reference bias (detector frame)
     ref_bias_coeffs = config.metadata.get("reference_bias_coefficients")
+    hf_amplitude = float(config.metadata.get("reference_bias_hf_amplitude", 0.0))
     radius_frac = None
     if config.metadata.get("detector_pupil") == "circular":
         radius_frac = float(config.metadata.get("detector_radius_fraction", 0.45))
 
-    if ref_bias_coeffs is not None:
+    if ref_bias_coeffs is not None or hf_amplitude > 0.0:
+        if ref_bias_coeffs is not None:
+            ref_bias_coeffs = np.array(ref_bias_coeffs, dtype=float)
         static_inst_bias = generate_reference_bias_field(
             tile_shape, 
-            np.array(ref_bias_coeffs, dtype=float),
-            radius_fraction=radius_frac
+            ref_bias_coeffs,
+            radius_fraction=radius_frac,
+            hf_amplitude=hf_amplitude,
+            seed=config.seed + 80_000
         )
     else:
         # If circular, we still might want a zero field with NaNs if the user wants "reference bias" to be masked

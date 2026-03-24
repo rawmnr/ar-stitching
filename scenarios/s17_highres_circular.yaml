@@ -4,42 +4,79 @@ grid_shape: [256, 256]
 tile_shape: [128, 128]
 pixel_size: 1.0
 pattern_type: annular
-overlap_fraction: 0.3
+overlap_fraction: 0.25
 baseline_name: mean
 seed: 18
 gaussian_noise_std: 1
 outlier_fraction: 0
 reference_bias: 1
 retrace_error: 0.005
+rotation_deg: [0.0]
+truth_basis: zernike
+truth_coefficients: [0.0, 0.0, 0.0, 5, 6, -3, 3, 3, -1, 1, 3, -2, 0.05, -0.1]
+truth_pupil: circular
+truth_radius_fraction: 0.48
+optical_psf_sigma: 0.8
+surface_drift_coefficients: []
+surface_bending_drift: 0.0
+mid_spatial_ripple_std: 1.0
+detector_pupil: circular
+detector_radius_fraction: 0.48
+detector_edge_roll_off: 1
+realized_pose_bias_xy: [1, -1]
+realized_pose_drift_std: 1
+realized_pose_error_std: 2
+interpolation_order: 3
+geometric_retrace_error: 0.1
+slope_retrace_error: 0.0
+reference_bias_hf_amplitude: 0.5
+reference_bias_drift_step: 0.4
+reference_bias_coefficients:
+  - 0.0
+  - 0.05
+  - -0.03
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 3.0
+  - 1.0
+  - 1.0
+  - 0.5
+  - -0.002
+  - 0.004
+  - 0.001
+  - 0.002
+  - 0.001
+  - -0.001
+  - 0.5
+  - 0.001
+  - 0.001
+  - 0.001
+  - 0.0005
+  - -0.5
+  - 0.0005
+  - 0.0005
+  - 1.0
+  - 0.0005
+  - 0.0005
+  - 0.02
+  - -0.1002
+  - 0.0002
+  - 0.0002
+  - 0.0002
+  - 0.0002
+  - 0.0002
+  - 0.0002
+ignore_piston: true
+ignore_tilt: true
+low_frequency_noise_std: 2
+subaperture_dc_step: 0.0
+subaperture_tip: 0.0
+subaperture_tilt: 0.0
+subaperture_focus: 0.0
+alignment_term: [0, 1, 2]
+alignment_random_coeff: 10.0
 metadata:
-  truth_basis: zernike
-  truth_coefficients: [0.0, 0.0, 0.0, 5, 6, -3, 3, 3, -1, 1, 3, -2, 0.05, -0.1]
-  truth_pupil: circular
-  truth_radius_fraction: 0.48
-  detector_pupil: circular
-  detector_radius_fraction: 0.48
-  detector_edge_roll_off: 1
-  optical_psf_sigma: 0.8
-  mid_spatial_ripple_std: 1
-  low_frequency_noise_std: 0.5
-  realized_pose_bias_xy: [1, -1]
-  realized_pose_drift_std: 0.8
-  realized_pose_error_std: 1
-  geometric_retrace_error: 0.1
-  interpolation_order: 3
-  ignore_piston: true
-  ignore_tilt: true
-  # Robustness evaluation: Random alignment terms per sub-aperture
-  # (0:Piston, 1:Tip, 2:Tilt, 3:Focus)
-  alignment_term: [0, 1, 2] 
-  alignment_random_coeff: 10.0
-  reference_bias_drift_step: 0.002
-  reference_bias_coefficients: [
-    0.0, 0.05, -0.03,  # Z1-Z3 (Piston, Tip, Tilt)
-    0, 0, -0, # Z4-Z6 (Defocus, Astig x2)
-    1, 3, 1, 1, # Z7-Z10 (Coma x2, Trefoil x2)
-    0.5, -0.002, 0.004, 0.001, 0.002, # Z11-Z15
-    0.001, -0.001, 0.5, 0.001, 0.001, 0.001, # Z16-Z21
-    0.0005, -0.5, 0.0005, 0.0005, 1, 0.0005, 0.0005, # Z22-Z28
-    0.02, -0.1002, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002 # Z29-Z36
-  ]
+  instrument_name: VirtualInterferometer_v2
+  operator: gemini_cli
