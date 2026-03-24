@@ -231,7 +231,7 @@ class CandidateStitcher:
         # Apply a modest low-pass filter to reduce the re-projection of
         # high-frequency temporal noise into the static calibration map.
         # Reduced sigma from 1.0 to 0.7 to preserve more high-frequency calibration.
-        sigma_filter = 0.7
+        sigma_filter = 0.8
         ref_filled = np.where(master_mask, R_map, 0.0)
         ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
         R_map[master_mask] = ref_smoothed[master_mask]
