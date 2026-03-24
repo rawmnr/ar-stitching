@@ -58,6 +58,55 @@ mid-spatial ripple, and edge effects. The primary failure mode is crosstalk:
 the candidate can easily absorb detector bias into nuisance terms or smooth the
 surface in a way that looks visually nice but worsens trusted RMS.
 
+## Perturbations in the measurement
+
+The fixed scenario `scenarios/s17_highres_circular.yaml` contains multiple
+realistic perturbations at once. Treat them as separate error sources that must
+be mitigated without mixing them together.
+
+- Pose bias and pose jitter.
+  The sub-aperture centers are not perfectly where the nominal scan says they
+  are. Literature usually mitigates this with constrained sub-pixel
+  registration, joint pose optimization, and strict gauge-centering of pose
+  corrections.
+- Pose drift across the scan.
+  The position error can evolve from one acquisition to the next. Literature
+  usually mitigates this with global overlap-consistent pose solves instead of
+  purely sequential alignment.
+- Detector-fixed calibration bias.
+  The detector can imprint a repeatable additive map in detector coordinates.
+  Literature usually mitigates this with simultaneous or alternating
+  calibration, robust detector-frame residual averaging, and explicit removal
+  of low-order degenerate modes from the calibration map.
+- Calibration and nuisance crosstalk.
+  Piston, tip, tilt, defocus, and detector bias can explain the same residuals
+  if gauges are weak. Literature usually mitigates this with explicit gauge
+  constraints and low-order mode projection on the detector map.
+- Geometric retrace error.
+  The measurement can contain slope-dependent or geometry-dependent distortion.
+  Literature usually mitigates this with better geometric modeling,
+  projection-aware alignment, and by not letting low-order nuisance terms absorb
+  everything.
+- Low-frequency drift.
+  Slow thermal or system drift can bias the whole reconstruction. Literature
+  usually mitigates this with damped alternating updates, low-order drift
+  modeling, and stable reference tracking rather than aggressive one-shot
+  solves.
+- Mid-spatial ripple and structured noise.
+  The observations contain non-white spatial structure, not only simple Gaussian
+  noise. Literature usually mitigates this with robust weighting and with
+  selective smoothing of the detector calibration map instead of smoothing the
+  final surface indiscriminately.
+- Sparse outliers, dust, and edge roll-off.
+  Border pixels and isolated artifacts can dominate least-squares residuals.
+  Literature usually mitigates this with IRLS, Huber initialization, optional
+  Tukey-style redescending rejection, mask erosion, and cross-fade edge
+  weighting.
+- Circular pupils and partial support.
+  Valid support is not rectangular and overlap geometry matters near borders.
+  Literature usually mitigates this with careful local-to-global indexing,
+  support-aware cropping, and fusion rules that respect the physical aperture.
+
 Use the trusted evaluator, not `scripts/compare_baselines.py`, as the judge.
 `compare_baselines.py` is useful for human visualization, but it is not the
 frozen scalar metric for the loop.
