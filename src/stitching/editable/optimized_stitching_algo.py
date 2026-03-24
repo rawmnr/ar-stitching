@@ -109,7 +109,7 @@ class CandidateStitcher:
                 oth_xn = xn_vals[j+1]
                 oth_yn = yn_vals[j+1]
                 oth_r = r_idx_vals[j+1]
-                row_weights.append(0.5 * (solve_w_vals[j] + solve_w_vals[j + 1]))
+                row_weights.append(np.sqrt(solve_w_vals[j] * solve_w_vals[j + 1]))
                 
                 # Nuisance terms for reference observation
                 rows_a.extend([row_count] * 3)
