@@ -10,7 +10,7 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 # Configuration anti-artefacts
 EDGE_EROSION_PX = 2
 FEATHER_WIDTH = 0.20
-SOLVE_FEATHER_WIDTH = 0.45
+SOLVE_FEATHER_WIDTH = 0.47
 
 class CandidateStitcher:
     def reconstruct(
