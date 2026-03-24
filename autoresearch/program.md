@@ -34,7 +34,7 @@ To set up a new experiment:
    - `src/stitching/editable/pso/baseline.py` - stochastic refinement reference. Read-only.
    - `docs/stitching_implementation_guide.md` - local implementation roadmap. Read-only.
    - `docs/Optimisation_Robuste_Stitching_Optique_Metrologie_wrapped.txt` - domain strategy notes on robust stitching, calibration separation, IRLS, Tukey/Huber, drift and retrace handling. Read-only.
-   - `docs/recallage_subpixel_amellioré.md` - constrained sub-pixel registration notes. Read-only.
+   - `docs/recallage_subpixel.md` - constrained sub-pixel registration notes. Read-only.
 4. Verify prerequisites:
    - `autoresearch/eval_s17_single.py` exists.
    - It loads `src/stitching/editable/optimized_stitching_algo.py`.
@@ -148,6 +148,17 @@ Why this metric matters:
 - It already respects scenario-level detrending rules.
 - It aligns with the repository leaderboard and accepted-candidate ranking.
 
+Metric policy for this loop:
+- Primary metric: `aggregate_rms`
+- Hard gate: `accepted_all: 1`
+- Soft constraint: `total_runtime_sec`
+- Side diagnostics only: `scenario_mae_detrended`, `scenario_hf_retention`, and
+  any optional calibration diagnostics you inspect manually
+
+Do not switch to a weighted composite score unless you can defend the weights
+mathematically. In this project the safest decision rule is primary metric plus
+hard gate plus soft constraint.
+
 **`total_runtime_sec`** is a soft constraint. Some increase is acceptable for a
 meaningful RMS gain, but runtime should not blow up. A change that is
 materially slower with negligible RMS gain is not worth keeping.
@@ -180,6 +191,8 @@ Recommended printed lines:
 ```text
 ---
 aggregate_rms: 0.12345678
+aggregate_mae: 0.10123456
+max_rms: 0.12345678
 total_runtime_sec: 18.42
 num_accepted: 1
 num_scenarios: 1
@@ -200,6 +213,8 @@ Once the evaluation finishes it should print a summary like this:
 ```text
 ---
 aggregate_rms: 0.12345678
+aggregate_mae: 0.10123456
+max_rms: 0.12345678
 total_runtime_sec: 18.42
 num_accepted: 1
 num_scenarios: 1

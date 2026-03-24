@@ -53,6 +53,8 @@ def _print_success(metrics: dict[str, float], scenario_report) -> None:
 
     print("---")
     print(f"aggregate_rms: {metrics['aggregate_rms']:.8f}")
+    print(f"aggregate_mae: {metrics['aggregate_mae']:.8f}")
+    print(f"max_rms: {metrics['max_rms']:.8f}")
     print(f"total_runtime_sec: {metrics['total_runtime_sec']:.2f}")
     print(f"num_accepted: {int(metrics['num_accepted'])}")
     print(f"num_scenarios: {int(metrics['num_scenarios'])}")

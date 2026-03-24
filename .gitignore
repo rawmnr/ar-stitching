@@ -215,6 +215,7 @@ experiments/rejected/
 autoresearch/results.tsv
 autoresearch/insights.md
 autoresearch/run.log
+autoresearch/AUTORESEARCH_COMPLETE_GUIDE.md
 
 # Temporary and local files
 test.txt
