@@ -361,7 +361,7 @@ class CandidateStitcher:
             median = float(np.median(all_residuals))
             mad = float(np.median(np.abs(all_residuals - median)))
             sigma = mad / 0.6745 if mad > 1e-12 else max(float(np.std(all_residuals)), 1e-6)
-            c = max(6.0 * sigma, 1e-6)
+            c = max(7.0 * sigma, 1e-6)
             u = (residual - median) / c
             weights = np.zeros_like(u, dtype=float)
             inside = np.abs(u) < 1.0
