@@ -197,7 +197,7 @@ class CandidateStitcher:
         robust_weights = np.ones(row_count, dtype=float)
         x = np.zeros(n_obs * n_params + n_R_pixels, dtype=float)
         
-        for _ in range(5):
+        for _ in range(8):
             w_sqrt = np.sqrt(robust_weights * row_weights_np)
             W = sp.diags(w_sqrt)
             A_w = W @ A
@@ -230,7 +230,6 @@ class CandidateStitcher:
         
         # Apply a modest low-pass filter to reduce the re-projection of
         # high-frequency temporal noise into the static calibration map.
-        # Reduced sigma from 1.0 to 0.7 to preserve more high-frequency calibration.
         sigma_filter = 0.9
         ref_filled = np.where(master_mask, R_map, 0.0)
         ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
