@@ -1,0 +1,107 @@
+commit	aggregate_rms	total_runtime_sec	status	description
+glsrb01	1.95642459	3.33	keep	GLS Robust baseline on s17_highres_circular
+glsbas1	1.74928964	0.77	keep	GLS baseline on s17_highres_circular
+siac001	1.43806340	32.83	keep	SIAC baseline on s17_highres_circular
+scsbas1	1.18121668	17.47	keep	SCS baseline on s17_highres_circular
+aa2bb06	1.18121668	12.75	keep	baseline setup verification on s17_highres_circular
+3b8c336	1.30121096	10.28	discard	weighted overlap clique with feather weights
+3b8c336	1.54329332	14.64	discard	alternating calibration loop with weighted nuisance solve
+12a8976	1.17841580	27.33	discard	bounded pose refinement with second solve too slow for tiny RMS gain
+12a8976	1.18539743	17.88	discard	pose refinement applied only in fusion regressed RMS
+c584628	1.18367721	18.16	discard	Huber-Tukey schedule plus detector-mode projection regressed
+e81057f	1.30426907	3.44	discard	eroding the alignment solve masks too aggressively
+0c27b26	1.15376079	14.30	keep	edge-aware overlap equations weighted by arithmetic mean
+b56d4e5	1.15620327	24.78	discard	hardened edge weighting in overlap solve regressed
+4170a57	1.15592774	15.33	discard	narrower solve feather taper regressed slightly
+12e1337	1.15163803	14.97	keep	wider solve taper improved edge-aware overlap equations
+e8c2b59	1.14991045	13.74	keep	slightly stronger solve taper improved further
+6dd6dd1	1.14876862	17.20	discard	wider solve taper gained little RMS for more runtime
+59fde78	1.14936864	16.28	discard	midpoint solve taper was slower for marginal gain
+ad3a4ba	1.14962806	15.36	discard	solve taper at 0.46 was not worth the tradeoff
+d7b5344	1.14436006	14.26	keep	relaxed fusion erosion at borders improved RMS
+8ca6164	1.20545969	15.66	discard	full fusion support was too permissive at the borders
+4b57ea8	1.13955304	15.86	keep	narrower fusion feather improved border rejection
+95041c2	1.13474467	14.28	keep	tighter fusion feather improved border rejection further
+6668b2f	1.13045397	14.59	keep	very tight fusion feather improved border rejection again
+7bb7337	1.13010093	17.86	discard	hard fusion cutoff gained little RMS for more runtime
+bc970fd	1.12916315	16.45	discard	combined tighter solve and fusion border weights were slower for marginal gain
+2822644	1.12958851	17.20	discard	solve taper at 0.48 regressed on the tradeoff curve
+70208f6	1.14070297	18.12	discard	reducing calibration smoothing regressed RMS
+d4f775c	1.12494318	14.72	keep	broader calibration smoothing improved the map
+116e999	1.12115367	118.89	discard	increase IRLS iterations from 5 to 8 improved RMS
+clique_revert	1.14316239	111.72	discard	all-to-all clique assembly regressed RMS (reverted)
+ed3e58b	1.11468708	25.41	keep	SIAC-5 + IRLS-8: restored original params with faster runtime
+4bc8ea8	1.11468708	24.38	keep	SIAC threshold 5e-5: same RMS faster runtime
+aaa4c24	1.11333500	27.38	keep	SOLVE_FEATHER=0.495 threshold=1e-5 improved RMS further
+probing	1.11236870	30.36	discard	sigma_filter=1.1 n_siac=6: RMS improved slightly but runtime >30s
+damp75_sig11	1.11218259	25.47	keep	sigma=1.1 n_siac=6 damping=0.75/0.25: new best RMS
+sig12	1.11194321	29.98	keep	sigma_filter=1.2: new best RMS
+sig13	1.11191963	30.80	discard	sigma_filter=1.3: marginal RMS gain costs >30s runtime
+lambda5e6	1.11194339	27.95	keep	lambda_reg=5e-6: same RMS as sig12 but 2s faster
+sig13_l2e5	1.11192007	27.08	keep	sigma=1.3 lambda=2e-5: best RMS under 30s runtime
+sig125	1.11190918	28.41	keep	sigma=1.25 lambda=2e-5: slightly better than 1.3
+sig128	1.11191111	29.39	keep	sigma=1.28 lambda=2e-5: marginal regression from 1.25
+geom_mean	1.10969045	35.50	keep	geometric mean row weights: massive RMS improvement, runtime >30s
+geom_irls6	1.10963136	29.22	keep	geometric mean + IRLS=6: new best RMS AND faster
+geom_irls5	1.10960580	25.53	keep	geometric mean + IRLS=5: continued improvement
+geom_irls4	1.10955775	21.11	keep	geometric mean + IRLS=4: even better and faster
+geom_irls3	1.10946387	13.92	keep	geometric mean + IRLS=3: dramatic speedup
+geom_irls2	1.10888412	9.56	keep	geometric mean + IRLS=2: massive gains
+geom_irls1	1.10595846	5.48	keep	geometric mean + IRLS=1: BEST RMS, 5.48s!
+geom_irls1_s13	1.10593121	7.81	keep	geometric mean + IRLS=1 + sigma=1.3: slightly better RMS
+geom_irls1_s135_n5	1.10590922	7.03	keep	geometric mean + IRLS=1 + sigma=1.35 + n_siac=5: new best overall
+52fafa3	1.08524066	18.27	discard	anchor topology: all obs to strongest-weight anchor per pixel
+61f1c0e	1.08264655	40.70	discard	deterministic chain sort + full working config with pose shifts (over 30s)
+f137588	1.08343791	19.20	keep	fix duplicate chain code in overlap assembly
+d4f2171	1.08350859	13.72	keep	block=2 n_irls=1: revert calibration to block-based gaussian
+a07ba6d	1.08236888	19.64	discard	median filter instead of gaussian for calibration map
+7bb58c9	1.08350859	13.72	keep	fix: reverted _low_frequency_calibration_map to block-based gaussian
+43c565c	1.07944451	7.75	keep	block=1 n_irls=1: full-res calibration - MAJOR improvement
+f7e4e2a	1.07909313	36.80	keep	block=1 n_irls=3: new best RMS (36.80s runtime)
+4509449	1.08255620	10.06	discard	block=1 n_irls=1 n_siac=10: fewer SIAC iterations hurt RMS
+78f59ed	1.07944451	7.84	keep	block=1 n_irls=1 n_siac=16 sigma=1.346: full-res calibration best fast config
+work-20260325-a	1.06789851	7.50	keep	current optimized candidate baseline before new sweeps
+work-20260325-b	1.19797000	8.00	discard	HF split sigma=1.0 regressed strongly; upstream smoothing dominates
+work-20260325-c	1.07694300	8.00	discard	edge erosion=2 slightly worse than current erosion=1
+work-20260325-d	1.06665000	8.00	keep	sigma_filter=1.5 slightly improved shallow-SIAC calibration
+work-20260325-e	1.04107500	14.00	keep	n_siac=32 materially improved alternating calibration convergence
+work-20260325-f	1.01949800	18.00	keep	n_siac=48 continued monotonic improvement
+work-20260325-g	1.00487200	24.00	keep	n_siac=64 nearly reached sub-1nm with default smoothing
+work-20260325-h	0.99873200	24.00	keep	n_siac=64 plus sigma_filter=1.5 crossed below 1nm
+work-20260325-i	0.98874800	24.00	keep	n_siac=64 plus sigma_filter=2.0 current best
+work-20260325-j	1.09814589	11.66	discard	per-step detector gauge projection and damped nuisance updates regressed badly
+work-20260325-k	0.98294700	10.53	keep	n_siac=72 improved further
+work-20260325-l	0.97879800	10.48	keep	n_siac=80 improved further
+work-20260325-m	0.97470400	12.47	keep	n_siac=96 improved further with sigma_filter=2.0
+work-20260325-n	0.97441900	12.25	keep	n_siac=96 sigma_filter=2.2 slight improvement over 2.0
+work-20260325-o	0.97434900	13.38	keep	n_siac=96 sigma_filter=2.1 validated best current candidate
+work-20260325-p	1.05302600	11.78	discard	normalized convolution for calibration smoothing regressed at sigma=2.1
+work-20260325-q	1.00127800	12.00	discard	normalized convolution retuned to sigma=3.5 still worse than baseline basin
+work-20260325-r	12.54630200	27.02	discard	full 6-parameter nuisance basis reopened low-order gauge and collapsed the solve
+work-20260325-s	1.09317900	12.00	discard	projecting detector modes on every estimated reference map regressed strongly
+work-20260325-t	1.02448021	12.02	discard	n_siac=96 fixed sigma_filter=1.0 regressed total RMS despite slightly lower high-order residual
+work-20260325-u	0.99104794	10.59	discard	annealed calibration smoothing from 2.5 to 0.8 over SIAC regressed total RMS
+work-20260325-v	0.99000611	14.09	discard	regularized 6-term nuisance refinement with lambda=10 reduced high-order residual but hurt low-order too much
+work-20260325-w	0.95551926	14.03	keep	regularized 6-term nuisance refinement with lambda=30 improved total RMS over the old basin
+work-20260325-x	0.97028154	12.99	discard	regularized 6-term nuisance refinement with lambda=100 over-shrank toward the 3-term model
+work-20260325-y	0.96262331	14.03	discard	regularized 6-term nuisance refinement with lambda=50 improved over baseline but worse than lambda=30
+9f035ea	0.95289226	12.05	keep	regularized 6-term nuisance refinement with lambda=20 is the new best candidate
+work-20260325-aa	0.95337742	21.56	discard	regularized 6-term nuisance refinement with lambda=18 traded slightly better HF residual for worse RMS and runtime
+20260325-live-baseline	0.92055912	40.56	discard	live baseline before new calibration sweeps; best then-current RMS but over 30s runtime
+20260325-mf-gate-strict	0.92215859	30.48	discard	adaptive MF count times consensus gate was too suppressive and exceeded runtime target
+20260325-mf-gate-loose	0.92078400	29.67	discard	looser consensus gate was nearly neutral but still worse than the live baseline
+20260325-mf-support-aware	0.92175507	31.83	discard	support-aware MF band-pass via masked gaussian regressed and missed runtime target
+20260325-mf-detrend	0.92199783	28.77	discard	MF-only detector low-order detrending before band-pass regressed
+20260325-mf-band-split	0.92095566	29.00	discard	separate MF low cutoff without consensus still regressed
+20260325-mf-state-split-b20	0.92054138	32.16	discard	separate LF and MF SIAC states with MF blend 0.20 improved RMS but exceeded runtime target
+20260325-mf-state-split-a38	0.92053615	32.48	discard	separate LF and MF states plus mf_alpha 0.38 improved RMS but exceeded runtime target
+20260325-mf-state-split-b15	0.92052380	38.00	discard	separate LF and MF states plus MF blend 0.15 improved RMS but exceeded runtime target
+20260325-mf-state-split-b10	0.92050570	29.51	keep	separate LF and MF states plus mf_alpha 0.38 and MF blend 0.10 is the current best under 30s
+20260325-mf-state-split-b08	0.92049561	49.99	discard	separate LF and MF states plus MF blend 0.08 improved RMS slightly but blew past the 30s runtime cap
+20260325-mf-state-split-n135	0.92455432	28.69	discard	reducing n_siac to 135 exited the useful calibration basin too early despite meeting runtime
+20260325-mf-state-split-a40	0.92051775	33.34	discard	separate LF and MF states plus mf_alpha 0.40 was slightly worse and missed runtime
+20260325-mf-state-split-minobs9	0.92231548	31.86	discard	raising MF min_obs to 9 was too strict and also missed runtime
+20260325-mf-state-split-lf45	0.92025700	29.39	keep	separate LF and MF states with LF blend 0.45 is the new best result under 30s
+20260325-mf-state-split-lf50	0.92022816	29.24	keep	separate LF and MF states with LF blend 0.50 improved again under 30s
+20260325-mf-state-split-lf55	0.92036785	29.31	discard	increasing LF blend to 0.55 overshot the new basin
+20260325-mf-state-split-a39	0.92028952	32.99	discard	raising mf_alpha to 0.39 on the LF blend 0.50 basin regressed and missed runtime

@@ -216,3 +216,6 @@ experiments/rejected/
 # Temporary and local files
 test.txt
 .codex_task.md
+
+autoresearch/results.tsv    
+autoresearch/results.tsv
