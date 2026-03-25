@@ -151,7 +151,10 @@ Why this metric matters:
 Metric policy for this loop:
 - Primary metric: `aggregate_rms`
 - Hard gate: `accepted_all: 1`
-- Soft constraint: `total_runtime_sec`
+- Runtime guardrail: prefer `total_runtime_sec <= 30.0`. Treat runs above 30 s
+  as `discard` unless they deliver a clearly material RMS improvement over the
+  current best. Treat runs above 100 s as automatic `discard` unless you are
+  explicitly running a one-off diagnosis.
 - Side diagnostics only: `scenario_mae_detrended`, `scenario_hf_retention`, and
   any optional calibration diagnostics you inspect manually
 
@@ -159,9 +162,9 @@ Do not switch to a weighted composite score unless you can defend the weights
 mathematically. In this project the safest decision rule is primary metric plus
 hard gate plus soft constraint.
 
-**`total_runtime_sec`** is a soft constraint. Some increase is acceptable for a
-meaningful RMS gain, but runtime should not blow up. A change that is
-materially slower with negligible RMS gain is not worth keeping.
+**`total_runtime_sec`** is a practical guardrail. The normal target band is
+roughly 20-30 seconds. If a candidate materially exceeds that band, treat the
+extra runtime as a regression unless the RMS gain is large enough to justify it.
 
 **Guardrail constraint**: `num_accepted` must equal `num_scenarios`.
 If the candidate fails acceptance or any hard evaluator guardrail, treat the
