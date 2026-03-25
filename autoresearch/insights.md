@@ -2,6 +2,7 @@
 
 ## Current Best
 - **0.92055912** at 32.16s (`f2a6108` - per-observation band-passed detector MF calibration, `sigma_filter=1.55`, `n_siac=149`, `lambda=14`, `mf_alpha=0.35`)
+- follow-up calibration restructuring reached **0.92108941** before alpha retuning; the final committed best remained `0.92055912`
 - **0.92167848** at 29.41s (same structural line before per-observation MF accumulation; `sigma_filter=1.55`)
 - **0.95289226** at 12.05s (`work-20260325-z` - first regularized 6-term nuisance refinement breakthrough, `lambda=20`)
 - **0.97434873** at 13.38s (`work-20260325-o` - `n_siac=96`, `sigma_filter=2.1`)
@@ -41,6 +42,7 @@
 - naive MF injection into the calibration map regressed because it re-injected surface HF leakage
 - extracting detector MF from each observation's band-passed detector-space residual before cross-observation averaging materially improved stability
 - this raised the stable MF-injection ceiling from tiny values to roughly `mf_alpha ~= 0.35`
+- the best filtered-MF configuration remained count-gated (`min_obs=8`); looser gating reintroduced contaminated MF and regressed quickly
 
 ## What Worked
 - CALIBRATION_BLOCK=1 (full resolution calibration map)
@@ -74,6 +76,9 @@
 - loosening the MF gate from `min_obs=8` to `min_obs=6` reopened too much contaminated structure and regressed badly
 - variance gating for MF injection did not beat the simpler count gate
 - late-iteration de-damping of `R_map` updates regressed
+- raw phase-correlation pose refinement catastrophically failed (`~14.9` nm RMS, rejected)
+- conservative gradient-domain local pose refinement was safe but completely inert
+- two-stage coarse+fine pose refinement, even when fed back through short post-pose alternation, remained inert on the metric
 
 ## Structural Findings
 - the old 1.07 nm floor was mostly an alternation-depth issue
@@ -89,11 +94,14 @@
 - this new MF path produced a real but still modest HF improvement:
   Zernike >36 residual moved from `~0.845` in the old basin to `~0.8373` in the current best
 - most of the total RMS gain still comes from low-order cleanup, so the project remains fundamentally HF-limited
+- pose is not the active bottleneck in the current implementation:
+  the scenario injects whole-pixel pose error scales, but both coarse and fine pose searches failed to move the accepted metric once calibration was improved
+- if pose is revisited later, it needs stronger instrumentation first (for example logging recovered shifts and validating they are nonzero / physically plausible) rather than another blind optimizer swap
 
 ## Promising Next Directions
 1. Keep the per-observation MF calibration architecture and improve detector/surface separation inside that path rather than returning to raw averaged-MF injection
 2. Investigate stronger detector-space consensus estimators for MF accumulation, since the current count gate still limits usable MF gain
-3. Rework pose refinement structurally; the current discrete shift path is not moving the metric
+3. Consider calibration-side confidence models that separate detector-fixed MF from leaked surface MF before averaging, rather than tuning pose again immediately
 4. Investigate why HF retention stays exactly zero even as RMS improves below 0.93 nm
 
 ## Crash Boundaries
