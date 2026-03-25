@@ -1,4 +1,4 @@
-"""Simultaneous Calibration and Stitching (SCS) - True Simultaneous Method."""
+"""Simultaneous Calibration and Stitching (SCS) with Alternating Refinement."""
 from __future__ import annotations
 
 import numpy as np
@@ -234,6 +234,22 @@ class CandidateStitcher:
         ref_filled = np.where(master_mask, R_map, 0.0)
         ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
         R_map[master_mask] = ref_smoothed[master_mask]
+        
+        # SIAC-style alternating calibration refinement
+        for _ in range(3):
+            fused_z, fused_mask = self._fuse_for_calibration(observations, nuisances, R_map, tile_shape, global_shape)
+            if not np.any(fused_mask):
+                break
+            
+            R_map_new = self._estimate_reference_map(observations, fused_z, fused_mask, nuisances, tile_shape, master_mask)
+            
+            ref_delta = float(np.max(np.abs(R_map_new - R_map)))
+            R_map = 0.6 * R_map + 0.4 * R_map_new
+            
+            if ref_delta < 1e-4:
+                break
+        
+        R_map = self._project_degenerate_modes(R_map, master_mask)
 
         # Final reconstruction (fusion) - simple uniform average
         sum_z = np.zeros(global_shape, dtype=float)
@@ -300,6 +316,95 @@ class CandidateStitcher:
         structure = np.ones((3, 3), dtype=bool)
         eroded = ndimage.binary_erosion(valid_mask, structure=structure, iterations=EDGE_EROSION_PX)
         return eroded
+
+    def _project_degenerate_modes(self, data: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        result = np.zeros_like(data, dtype=float)
+        if not np.any(mask):
+            return result
+        yy, xx = np.indices(data.shape, dtype=float)
+        y_norm = 2.0 * yy[mask] / max(data.shape[0] - 1, 1) - 1.0
+        x_norm = 2.0 * xx[mask] / max(data.shape[1] - 1, 1) - 1.0
+        A = np.column_stack([
+            np.ones(mask.sum(), dtype=float), y_norm, x_norm,
+            x_norm**2 + y_norm**2, x_norm**2 - y_norm**2, 2.0 * x_norm * y_norm
+        ])
+        coeff, *_ = np.linalg.lstsq(A, data[mask], rcond=None)
+        result[mask] = data[mask] - (A @ coeff)
+        return result
+
+    def _fuse_for_calibration(self, observations, nuisances, R_map, tile_shape, global_shape):
+        sum_z = np.zeros(global_shape, dtype=float)
+        count = np.zeros(global_shape, dtype=float)
+        for i, obs in enumerate(observations):
+            yy, xx = np.indices(tile_shape, dtype=float)
+            y_norm = 2.0 * yy / max(tile_shape[0] - 1, 1) - 1.0
+            x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
+            p, tip, tilt = nuisances[i]
+            model = p + tip * y_norm + tilt * x_norm
+            z_corr = obs.z - model - R_map
+            working_mask = self._get_eroded_mask(obs.valid_mask)
+            feather_weights = self._smooth_feather_weights(working_mask)
+            cx, cy = obs.center_xy
+            top = int(round(cy - (tile_shape[0] - 1) / 2.0))
+            left = int(round(cx - (tile_shape[1] - 1) / 2.0))
+            gy_s, gy_e = max(0, top), min(global_shape[0], top + tile_shape[0])
+            gx_s, gx_e = max(0, left), min(global_shape[1], left + tile_shape[1])
+            ly_s, lx_s = max(0, -top), max(0, -left)
+            ly_e, lx_e = ly_s + (gy_e - gy_s), lx_s + (gx_e - gx_s)
+            if gy_e > gy_s and gx_e > gx_s:
+                local_z = z_corr[ly_s:ly_e, lx_s:lx_e]
+                local_mask_orig = obs.valid_mask[ly_s:ly_e, lx_s:lx_e]
+                local_weights = feather_weights[ly_s:ly_e, lx_s:lx_e]
+                sum_z[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_z[local_mask_orig] * local_weights[local_mask_orig]
+                count[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_weights[local_mask_orig]
+        valid_mask = count > 0
+        fused_z = np.full(global_shape, np.nan, dtype=float)
+        fused_z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
+        return fused_z, valid_mask
+
+    def _estimate_reference_map(self, observations, fused_z, fused_mask, nuisances, tile_shape, master_mask):
+        sum_r = np.zeros(tile_shape, dtype=float)
+        sum_w = np.zeros(tile_shape, dtype=float)
+        for i, obs in enumerate(observations):
+            rows, cols = tile_shape
+            yy_full, xx_full = np.indices(tile_shape, dtype=float)
+            y_norm_full = 2.0 * yy_full / max(rows - 1, 1) - 1.0
+            x_norm_full = 2.0 * xx_full / max(cols - 1, 1) - 1.0
+            p, tip, tilt = nuisances[i]
+            model = p + tip * y_norm_full + tilt * x_norm_full
+            top = int(round(obs.center_xy[1] - (rows - 1) / 2.0))
+            left = int(round(obs.center_xy[0] - (cols - 1) / 2.0))
+            yy, xx = np.where(obs.valid_mask)
+            if yy.size == 0:
+                continue
+            gy, gx = yy + top, xx + left
+            valid_global = (
+                (gy >= 0) & (gy < fused_z.shape[0]) &
+                (gx >= 0) & (gx < fused_z.shape[1]) &
+                fused_mask[gy, gx]
+            )
+            if not np.any(valid_global):
+                continue
+            yy, xx, gy, gx = yy[valid_global], xx[valid_global], gy[valid_global], gx[valid_global]
+            residual = obs.z[yy, xx] - model[yy, xx] - fused_z[gy, gx]
+            all_residuals = residual
+            median = float(np.median(all_residuals))
+            mad = float(np.median(np.abs(all_residuals - median)))
+            sigma = mad / 0.6745 if mad > 1e-12 else max(float(np.std(all_residuals)), 1e-6)
+            c = max(4.685 * sigma, 1e-6)
+            u = (residual - median) / c
+            weights = np.zeros_like(u, dtype=float)
+            inside = np.abs(u) < 1.0
+            weights[inside] = (1.0 - u[inside] ** 2) ** 2
+            sum_r[yy, xx] += weights * residual
+            sum_w[yy, xx] += weights
+        reference_map = np.zeros(tile_shape, dtype=float)
+        valid = sum_w > 0
+        reference_map[valid] = sum_r[valid] / sum_w[valid]
+        ref_filled = np.where(master_mask, reference_map, 0.0)
+        ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=0.9)
+        reference_map[valid] = ref_smoothed[valid]
+        return reference_map
 
     def _smooth_feather_weights(self, valid_mask: np.ndarray, feather_width: float = FEATHER_WIDTH) -> np.ndarray:
         """Pondération cosinus avec dérivée nulle aux transitions."""
