@@ -13,7 +13,7 @@ SOLVE_FEATHER_WIDTH = 0.51
 sigma_filter = 1.346
 CALIBRATION_BLOCK = 1
 CALIBRATION_SMOOTH_SIGMA = 0.75
-n_irls = 1
+n_irls = 3
 n_siac = 16
 POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
 
