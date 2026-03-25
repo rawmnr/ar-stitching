@@ -12,7 +12,7 @@ FEATHER_WIDTH = 0.04
 SOLVE_FEATHER_WIDTH = 0.70
 sigma_filter = 1.346
 n_irls = 1
-n_siac = 5
+n_siac = 6
 
 class CandidateStitcher:
     def reconstruct(
@@ -383,7 +383,7 @@ class CandidateStitcher:
                 x_norm_full[yy, xx]
             ])
             
-            # Robust fit using Huber weights
+            # Simple least squares fit
             coeff, *_ = np.linalg.lstsq(A_nuis, target, rcond=None)
             
             # Full replacement - no damping
