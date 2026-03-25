@@ -98,3 +98,10 @@ work-20260325-aa	0.95337742	21.56	discard	regularized 6-term nuisance refinement
 20260325-mf-state-split-b15	0.92052380	38.00	discard	separate LF and MF states plus MF blend 0.15 improved RMS but exceeded runtime target
 20260325-mf-state-split-b10	0.92050570	29.51	keep	separate LF and MF states plus mf_alpha 0.38 and MF blend 0.10 is the current best under 30s
 20260325-mf-state-split-b08	0.92049561	49.99	discard	separate LF and MF states plus MF blend 0.08 improved RMS slightly but blew past the 30s runtime cap
+20260325-mf-state-split-n135	0.92455432	28.69	discard	reducing n_siac to 135 exited the useful calibration basin too early despite meeting runtime
+20260325-mf-state-split-a40	0.92051775	33.34	discard	separate LF and MF states plus mf_alpha 0.40 was slightly worse and missed runtime
+20260325-mf-state-split-minobs9	0.92231548	31.86	discard	raising MF min_obs to 9 was too strict and also missed runtime
+20260325-mf-state-split-lf45	0.92025700	29.39	keep	separate LF and MF states with LF blend 0.45 is the new best result under 30s
+20260325-mf-state-split-lf50	0.92022816	29.24	keep	separate LF and MF states with LF blend 0.50 improved again under 30s
+20260325-mf-state-split-lf55	0.92036785	29.31	discard	increasing LF blend to 0.55 overshot the new basin
+20260325-mf-state-split-a39	0.92028952	32.99	discard	raising mf_alpha to 0.39 on the LF blend 0.50 basin regressed and missed runtime
