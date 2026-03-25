@@ -10,13 +10,13 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 EDGE_EROSION_PX = 1
 FEATHER_WIDTH = 0.04
 SOLVE_FEATHER_WIDTH = 0.51
-sigma_filter = 1.346
+sigma_filter = 2.1
 CALIBRATION_BLOCK = 1
 CALIBRATION_SMOOTH_SIGMA = 0.75
 n_irls = 1
-n_siac = 12
+n_siac = 96
 POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
-HF_SPLIT_SIGMA = 3.0
+HF_SPLIT_SIGMA = 0
 
 class CandidateStitcher:
     def reconstruct(
@@ -235,7 +235,6 @@ class CandidateStitcher:
                 break
             
             R_map_new = self._estimate_reference_map(observations, fused_z, fused_mask, nuisances, tile_shape, master_mask)
-            
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
             R_map = 0.60 * R_map + 0.40 * R_map_new
             
