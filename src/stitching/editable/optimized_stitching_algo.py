@@ -9,10 +9,13 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 
 EDGE_EROSION_PX = 1
 FEATHER_WIDTH = 0.04
-SOLVE_FEATHER_WIDTH = 0.70
+SOLVE_FEATHER_WIDTH = 0.51
 sigma_filter = 1.346
-n_irls = 1
-n_siac = 7
+CALIBRATION_BLOCK = 2
+CALIBRATION_SMOOTH_SIGMA = 0.75
+n_irls = 3
+n_siac = 16
+POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
 
 class CandidateStitcher:
     def reconstruct(
@@ -100,7 +103,48 @@ class CandidateStitcher:
         for s, e in zip(boundaries[:-1], boundaries[1:]):
             n_overlap = e - s
             if n_overlap < 2:
-                pixel_idx += 1
+                continue
+            
+            slice_indices = list(range(s, e))
+            slice_indices.sort(key=lambda j: solve_w_vals[j], reverse=True)
+            
+            inv_overlap_w = 1.0 / max(n_overlap - 1, 1)
+            
+            for k in range(len(slice_indices) - 1):
+                j = slice_indices[k]
+                ref_o = obs_idx[j]
+                ref_z = z_vals[j]
+                ref_xn = xn_vals[j]
+                ref_yn = yn_vals[j]
+                ref_r = r_idx_vals[j]
+                
+                l = slice_indices[k + 1]
+                oth_o = obs_idx[l]
+                oth_z = z_vals[l]
+                oth_xn = xn_vals[l]
+                oth_yn = yn_vals[l]
+                oth_r = r_idx_vals[l]
+                
+                row_weights.append(np.sqrt(solve_w_vals[j] * solve_w_vals[l]) * inv_overlap_w)
+                
+                rows_a.extend([row_count] * 3)
+                cols_a.extend([ref_o * n_params + k for k in range(3)])
+                data_a.extend([1.0, ref_yn, ref_xn])
+                
+                rows_a.append(row_count)
+                cols_a.append(n_obs * n_params + ref_r)
+                data_a.append(1.0)
+                
+                rows_a.extend([row_count] * 3)
+                cols_a.extend([oth_o * n_params + k for k in range(3)])
+                data_a.extend([-1.0, -oth_yn, -oth_xn])
+                
+                rows_a.append(row_count)
+                cols_a.append(n_obs * n_params + oth_r)
+                data_a.append(-1.0)
+                
+                b.append(ref_z - oth_z)
+                row_count += 1
                 continue
             
             # Inverse overlap count weighting: sparse overlaps get higher weight
@@ -185,7 +229,7 @@ class CandidateStitcher:
             
         Constraint = sp.csr_matrix((C_data, (C_rows, C_cols)), shape=(c_idx, n_obs * n_params + n_R_pixels))
         
-        lambda_reg = 3e-4
+        lambda_reg = 1e-6
         
         robust_weights = np.ones(row_count, dtype=float)
         x = np.zeros(n_obs * n_params + n_R_pixels, dtype=float)
@@ -221,9 +265,8 @@ class CandidateStitcher:
         R_map = np.zeros(tile_shape, dtype=float)
         R_map[master_mask] = R_vals
         
-        ref_filled = np.where(master_mask, R_map, 0.0)
-        ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
-        R_map[master_mask] = ref_smoothed[master_mask]
+        R_map = self._low_frequency_calibration_map(R_map, master_mask)
+        pose_shifts = None
         
         for siac_iter in range(n_siac):
             fused_z, fused_mask = self._fuse_for_calibration(observations, nuisances, R_map, tile_shape, global_shape)
@@ -240,7 +283,19 @@ class CandidateStitcher:
             
             if ref_delta < 1e-5:
                 break
-        
+
+        pose_shifts = self._estimate_pose_shifts(observations, nuisances, R_map, fused_z, fused_mask, tile_shape, global_shape)
+        if np.any(pose_shifts):
+            fused_z, fused_mask = self._fuse_for_calibration(
+                observations,
+                nuisances,
+                R_map,
+                tile_shape,
+                global_shape,
+                pose_shifts=pose_shifts,
+            )
+            nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
+
         R_map = self._project_degenerate_modes(R_map, master_mask)
 
         sum_z = np.zeros(global_shape, dtype=float)
@@ -256,6 +311,8 @@ class CandidateStitcher:
             model = p + tip * y_norm + tilt * x_norm
             
             z_corr = obs.z - model - R_map
+            if pose_shifts is not None:
+                z_corr = self._apply_pose_shift(z_corr, pose_shifts[i])
             
             working_mask = self._get_eroded_mask(obs.valid_mask)
             feather_weights = self._smooth_feather_weights(working_mask)
@@ -316,7 +373,7 @@ class CandidateStitcher:
         result[mask] = data[mask] - (A @ coeff)
         return result
 
-    def _fuse_for_calibration(self, observations, nuisances, R_map, tile_shape, global_shape):
+    def _fuse_for_calibration(self, observations, nuisances, R_map, tile_shape, global_shape, pose_shifts=None):
         sum_z = np.zeros(global_shape, dtype=float)
         count = np.zeros(global_shape, dtype=float)
         for i, obs in enumerate(observations):
@@ -326,6 +383,8 @@ class CandidateStitcher:
             p, tip, tilt = nuisances[i]
             model = p + tip * y_norm + tilt * x_norm
             z_corr = obs.z - model - R_map
+            if pose_shifts is not None:
+                z_corr = self._apply_pose_shift(z_corr, pose_shifts[i])
             working_mask = self._get_eroded_mask(obs.valid_mask)
             feather_weights = self._smooth_feather_weights(working_mask)
             cx, cy = obs.center_xy
@@ -430,9 +489,7 @@ class CandidateStitcher:
         reference_map = np.zeros(tile_shape, dtype=float)
         valid = sum_w > 0
         reference_map[valid] = sum_r[valid] / sum_w[valid]
-        ref_filled = np.where(master_mask, reference_map, 0.0)
-        ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
-        reference_map[valid] = ref_smoothed[valid]
+        reference_map = self._low_frequency_calibration_map(reference_map, valid)
         return reference_map
 
     def _smooth_feather_weights(self, valid_mask: np.ndarray, feather_width: float = FEATHER_WIDTH) -> np.ndarray:
@@ -457,3 +514,98 @@ class CandidateStitcher:
         weights[plateau] = 1.0
         
         return weights
+
+    def _low_frequency_calibration_map(self, data: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        if not np.any(mask):
+            return np.zeros_like(data, dtype=float)
+
+        block = int(CALIBRATION_BLOCK)
+        if block <= 1:
+            ref_filled = np.where(mask, data, 0.0)
+            ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
+            result = np.zeros_like(data, dtype=float)
+            result[mask] = ref_smoothed[mask]
+            return result
+
+        h, w = data.shape
+        pad_h = (-h) % block
+        pad_w = (-w) % block
+        if pad_h or pad_w:
+            padded_data = np.pad(data, ((0, pad_h), (0, pad_w)), mode="constant")
+            padded_mask = np.pad(mask, ((0, pad_h), (0, pad_w)), mode="constant")
+        else:
+            padded_data = data
+            padded_mask = mask
+
+        ph, pw = padded_data.shape
+        coarse_h = ph // block
+        coarse_w = pw // block
+        reshaped_data = padded_data.reshape(coarse_h, block, coarse_w, block)
+        reshaped_mask = padded_mask.reshape(coarse_h, block, coarse_w, block)
+        sum_blocks = np.sum(reshaped_data * reshaped_mask, axis=(1, 3))
+        count_blocks = np.sum(reshaped_mask, axis=(1, 3))
+
+        coarse = np.zeros((coarse_h, coarse_w), dtype=float)
+        valid = count_blocks > 0
+        coarse[valid] = sum_blocks[valid] / count_blocks[valid]
+        if np.any(valid):
+            coarse = ndimage.gaussian_filter(coarse, sigma=CALIBRATION_SMOOTH_SIGMA)
+
+        upsampled = np.repeat(np.repeat(coarse, block, axis=0), block, axis=1)
+        result = np.zeros_like(padded_data, dtype=float)
+        result[:, :] = upsampled
+        return result[:h, :w]
+
+    def _estimate_pose_shifts(self, observations, nuisances, R_map, fused_z, fused_mask, tile_shape, global_shape):
+        shifts = np.zeros((len(observations), 2), dtype=float)
+        if not np.any(fused_mask):
+            return shifts
+
+        yy, xx = np.indices(tile_shape, dtype=float)
+        y_norm = 2.0 * yy / max(tile_shape[0] - 1, 1) - 1.0
+        x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
+
+        for i, obs in enumerate(observations):
+            p, tip, tilt = nuisances[i]
+            model = p + tip * y_norm + tilt * x_norm
+            z_corr = obs.z - model - R_map
+            working_mask = self._get_eroded_mask(obs.valid_mask)
+
+            cx, cy = obs.center_xy
+            top = int(round(cy - (tile_shape[0] - 1) / 2.0))
+            left = int(round(cx - (tile_shape[1] - 1) / 2.0))
+            gy_s, gy_e = max(0, top), min(global_shape[0], top + tile_shape[0])
+            gx_s, gx_e = max(0, left), min(global_shape[1], left + tile_shape[1])
+            ly_s, lx_s = max(0, -top), max(0, -left)
+            ly_e, lx_e = ly_s + (gy_e - gy_s), lx_s + (gx_e - gx_s)
+            if gy_e <= gy_s or gx_e <= gx_s:
+                continue
+
+            fused_view = fused_z[gy_s:gy_e, gx_s:gx_e]
+            fused_mask_view = fused_mask[gy_s:gy_e, gx_s:gx_e]
+            local_mask = working_mask[ly_s:ly_e, lx_s:lx_e] & fused_mask_view
+            if not np.any(local_mask):
+                continue
+
+            best_shift = np.zeros(2, dtype=float)
+            best_score = np.inf
+
+            for dy in POSE_SHIFT_STEPS:
+                for dx in POSE_SHIFT_STEPS:
+                    shifted = self._apply_pose_shift(z_corr, (dy, dx))
+                    local_z = shifted[ly_s:ly_e, lx_s:lx_e]
+                    residual = local_z[local_mask] - fused_view[local_mask]
+                    score = float(np.median(np.abs(residual)))
+                    if score < best_score:
+                        best_score = score
+                        best_shift[:] = (dx, dy)
+
+            shifts[i] = best_shift
+
+        return shifts
+
+    def _apply_pose_shift(self, tile: np.ndarray, shift_xy: tuple[float, float]) -> np.ndarray:
+        dx, dy = shift_xy
+        if abs(dx) < 1e-12 and abs(dy) < 1e-12:
+            return tile
+        return ndimage.shift(tile, shift=(dy, dx), order=3, mode="nearest", prefilter=True)
