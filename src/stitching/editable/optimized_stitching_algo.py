@@ -224,7 +224,7 @@ class CandidateStitcher:
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
             R_map = 0.6 * R_map + 0.4 * R_map_new
             
-            if ref_delta < 1e-4:
+            if ref_delta < 5e-5:
                 break
         
         R_map = self._project_degenerate_modes(R_map, master_mask)
