@@ -386,8 +386,8 @@ class CandidateStitcher:
             # Robust fit using Huber weights
             coeff, *_ = np.linalg.lstsq(A_nuis, target, rcond=None)
             
-            # Damped update (very strongly prefer new)
-            new_nuisances[i] = 0.2 * nuisances[i] + 0.8 * coeff
+            # Damped update (nearly full replacement)
+            new_nuisances[i] = 0.1 * nuisances[i] + 0.9 * coeff
         
         return new_nuisances
 
