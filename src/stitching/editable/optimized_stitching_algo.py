@@ -10,15 +10,20 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 EDGE_EROSION_PX = 1
 FEATHER_WIDTH = 0.04
 SOLVE_FEATHER_WIDTH = 0.51
-sigma_filter = 2.1
+sigma_filter = 1.55
 CALIBRATION_BLOCK = 1
 CALIBRATION_SMOOTH_SIGMA = 0.75
+CALIBRATION_MF_ALPHA = 0.35
+CALIBRATION_MF_MIN_OBS = 8
+CALIBRATION_MF_GATE_SIGMA = 0.5
+CALIBRATION_BP_SIGMA = 0.5
 n_irls = 1
-n_siac = 96
+n_siac = 149
 POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
 HF_SPLIT_SIGMA = 0
 NUISANCE_DIM = 6
-NUISANCE_REG_LAMBDA = 20.0
+NUISANCE_REG_LAMBDA = 14.0
+NUISANCE_QUADRATIC_DAMPING = 0.125
 
 class CandidateStitcher:
     def reconstruct(
@@ -237,7 +242,15 @@ class CandidateStitcher:
             if not np.any(fused_mask):
                 break
             
-            R_map_new = self._estimate_reference_map(observations, fused_z, fused_mask, nuisances, tile_shape, master_mask)
+            R_map_new = self._estimate_reference_map(
+                observations,
+                fused_z,
+                fused_mask,
+                nuisances,
+                tile_shape,
+                master_mask,
+                mf_alpha=CALIBRATION_MF_ALPHA,
+            )
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
             R_map = 0.60 * R_map + 0.40 * R_map_new
             
@@ -452,7 +465,11 @@ class CandidateStitcher:
                 rcond=None,
             )
 
-            new_nuisances[i] = coeff
+            new_nuisances[i, :3] = coeff[:3]
+            new_nuisances[i, 3:] = (
+                (1.0 - NUISANCE_QUADRATIC_DAMPING) * nuisances[i, 3:]
+                + NUISANCE_QUADRATIC_DAMPING * coeff[3:]
+            )
         
         return new_nuisances
 
@@ -464,9 +481,13 @@ class CandidateStitcher:
         nuisances,
         tile_shape,
         master_mask,
+        mf_alpha: float,
     ):
         sum_r = np.zeros(tile_shape, dtype=float)
         sum_w = np.zeros(tile_shape, dtype=float)
+        sum_mf = np.zeros(tile_shape, dtype=float)
+        sum_mf_w = np.zeros(tile_shape, dtype=float)
+        n_contributing = np.zeros(tile_shape, dtype=float)
         for i, obs in enumerate(observations):
             rows, cols = tile_shape
             yy_full, xx_full = np.indices(tile_shape, dtype=float)
@@ -499,10 +520,37 @@ class CandidateStitcher:
             weights[inside] = (1.0 - u[inside] ** 2) ** 2
             sum_r[yy, xx] += weights * residual
             sum_w[yy, xx] += weights
-        reference_map = np.zeros(tile_shape, dtype=float)
+            n_contributing[yy, xx] += (weights > 0.0).astype(float)
+
+            residual_image = np.zeros(tile_shape, dtype=float)
+            residual_image[yy, xx] = residual
+            mf_hi = ndimage.gaussian_filter(residual_image, sigma=CALIBRATION_BP_SIGMA)
+            mf_lo = ndimage.gaussian_filter(residual_image, sigma=sigma_filter)
+            mf_image = mf_hi - mf_lo
+            sum_mf[yy, xx] += weights * mf_image[yy, xx]
+            sum_mf_w[yy, xx] += weights
+
+        reference_raw = np.zeros(tile_shape, dtype=float)
         valid = sum_w > 0
-        reference_map[valid] = sum_r[valid] / sum_w[valid]
-        reference_map = self._low_frequency_calibration_map(reference_map, valid)
+        reference_raw[valid] = sum_r[valid] / sum_w[valid]
+
+        reference_lf = self._low_frequency_calibration_map(reference_raw, valid)
+        reference_mf = np.zeros_like(reference_raw)
+        mf_valid = sum_mf_w > 0
+        reference_mf[mf_valid] = sum_mf[mf_valid] / sum_mf_w[mf_valid]
+        reference_mf = self._project_degenerate_modes(reference_mf, valid)
+
+        gate = np.zeros(tile_shape, dtype=float)
+        gate[n_contributing >= CALIBRATION_MF_MIN_OBS] = 1.0
+
+        gate = ndimage.gaussian_filter(gate, sigma=CALIBRATION_MF_GATE_SIGMA)
+        gate = np.clip(gate, 0.0, 1.0)
+
+        reference_map = np.zeros(tile_shape, dtype=float)
+        reference_map[valid] = (
+            reference_lf[valid]
+            + mf_alpha * gate[valid] * reference_mf[valid]
+        )
         return reference_map
 
     def _smooth_feather_weights(self, valid_mask: np.ndarray, feather_width: float = FEATHER_WIDTH) -> np.ndarray:
