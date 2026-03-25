@@ -235,9 +235,8 @@ class CandidateStitcher:
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
             R_map = 0.70 * R_map + 0.30 * R_map_new
             
-            # Refine nuisances every other iteration using current calibration
-            if siac_iter % 2 == 1:
-                nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
+            # Refine nuisances every iteration using current calibration
+            nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
             
             if ref_delta < 1e-5:
                 break
