@@ -224,6 +224,16 @@ scenario_rms_detrended: 0.12345678
 scenario_hf_retention: 0.81234567
 ```
 
+Required completion checklist after every run:
+
+1. Read `aggregate_rms` and `accepted_all` from the eval output.
+2. Append exactly one row to `autoresearch/results.tsv`.
+3. Verify the row contains the commit hash, metric, runtime, status, and a
+   short description.
+4. Append a brief note to `autoresearch/insights.md` if the run changed
+   direction, exposed a failure mode, or produced a new useful lesson.
+5. Only then mark the run complete or move to the next edit.
+
 Extract the key metric from the log file:
 
 ```text
@@ -240,6 +250,11 @@ grep "^accepted_all:" autoresearch/run.log
 
 When an experiment is done, log it to `autoresearch/results.tsv`
 (tab-separated, not comma-separated).
+
+**Mandatory post-evaluation gate**: an evaluation is not complete until its
+`results.tsv` row has been appended. Do not start the next experiment, edit the
+candidate again, or summarize the run as finished until the TSV entry is
+written. This applies even for crashes or rejected runs.
 
 The TSV has a header row and 5 columns:
 
@@ -266,6 +281,14 @@ d4e5f6g	inf	0.0	crash	support mask mismatch after pose update
 ## Insights memory
 
 Maintain `autoresearch/insights.md` as untracked working memory.
+
+After every experiment, add a short note when the run produces anything worth
+remembering, especially:
+
+- a new improvement;
+- a regression or crash;
+- a boundary condition;
+- a dead end worth avoiding.
 
 After every 10 experiments, update it with:
 - what worked;
