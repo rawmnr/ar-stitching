@@ -14,8 +14,9 @@ sigma_filter = 1.346
 CALIBRATION_BLOCK = 1
 CALIBRATION_SMOOTH_SIGMA = 0.75
 n_irls = 1
-n_siac = 16
+n_siac = 12
 POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
+HF_SPLIT_SIGMA = 3.0
 
 class CandidateStitcher:
     def reconstruct(
@@ -261,6 +262,8 @@ class CandidateStitcher:
         sum_z = np.zeros(global_shape, dtype=float)
         count = np.zeros(global_shape, dtype=float)
         support = np.zeros(global_shape, dtype=bool)
+        best_z = np.full(global_shape, np.nan, dtype=float)
+        best_w = np.zeros(global_shape, dtype=float)
 
         for i, obs in enumerate(observations):
             yy, xx = np.indices(tile_shape, dtype=float)
@@ -295,16 +298,31 @@ class CandidateStitcher:
                 sum_z[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_z[local_mask_orig] * local_weights[local_mask_orig]
                 count[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_weights[local_mask_orig]
                 support[gy_s:gy_e, gx_s:gx_e][local_mask_orig] = True
+                
+                region_mask = local_mask_orig & (local_weights > best_w[gy_s:gy_e, gx_s:gx_e])
+                best_z[gy_s:gy_e, gx_s:gx_e][region_mask] = local_z[region_mask]
+                best_w[gy_s:gy_e, gx_s:gx_e][region_mask] = local_weights[region_mask]
 
         valid_mask = count > 0
-        z = np.full(global_shape, np.nan, dtype=float)
-        z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
+        z_mean = np.full(global_shape, np.nan, dtype=float)
+        z_mean[valid_mask] = sum_z[valid_mask] / count[valid_mask]
+        
+        z_final = np.full(global_shape, np.nan, dtype=float)
+        if HF_SPLIT_SIGMA > 0:
+            z_mean_filled = np.where(valid_mask, z_mean, 0.0)
+            z_best_filled = np.where(valid_mask, best_z, 0.0)
+            z_mean_lf = ndimage.gaussian_filter(z_mean_filled, sigma=HF_SPLIT_SIGMA)
+            z_best_lf = ndimage.gaussian_filter(z_best_filled, sigma=HF_SPLIT_SIGMA)
+            z_hf_from_best = best_z - z_best_lf
+            z_final[valid_mask] = z_mean_lf[valid_mask] + z_hf_from_best[valid_mask]
+        else:
+            z_final = z_mean
         
         R_map_final = np.full(tile_shape, np.nan, dtype=float)
         R_map_final[master_mask] = R_map[master_mask]
         
         return ReconstructionSurface(
-            z=z,
+            z=z_final,
             valid_mask=valid_mask,
             source_observation_ids=tuple(o.observation_id for o in observations),
             observed_support_mask=support,
