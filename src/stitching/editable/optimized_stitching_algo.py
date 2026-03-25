@@ -26,7 +26,7 @@ CALIBRATION_MF_DETREND_LOWORDER = False
 CALIBRATION_LF_UPDATE_BLEND = 0.50
 CALIBRATION_MF_UPDATE_BLEND = 0.10
 n_irls = 1
-n_siac = 149
+n_siac = 56
 POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
 HF_SPLIT_SIGMA = 0
 NUISANCE_DIM = 6
@@ -34,6 +34,38 @@ NUISANCE_REG_LAMBDA = 14.0
 NUISANCE_QUADRATIC_DAMPING = 0.125
 
 class CandidateStitcher:
+    def _basis_family(self, config: ScenarioConfig) -> str:
+        truth_basis = str(config.metadata.get("truth_basis", "")).lower()
+        truth_pupil = str(config.metadata.get("truth_pupil", "")).lower()
+        detector_pupil = str(config.metadata.get("detector_pupil", "")).lower()
+        if truth_basis == "legendre" or truth_pupil == "square" or detector_pupil == "square":
+            return "legendre"
+        return "radial"
+
+    def _low_order_terms(
+        self,
+        y_norm: np.ndarray,
+        x_norm: np.ndarray,
+        basis_family: str,
+    ) -> np.ndarray:
+        if basis_family == "legendre":
+            return np.stack([
+                np.ones_like(y_norm),
+                y_norm,
+                x_norm,
+                0.5 * (3.0 * y_norm**2 - 1.0),
+                0.5 * (3.0 * x_norm**2 - 1.0),
+                y_norm * x_norm,
+            ], axis=-1)
+        return np.stack([
+            np.ones_like(y_norm),
+            y_norm,
+            x_norm,
+            x_norm**2 + y_norm**2,
+            x_norm**2 - y_norm**2,
+            2.0 * x_norm * y_norm,
+        ], axis=-1)
+
     def reconstruct(
         self,
         observations: tuple[SubApertureObservation, ...],
@@ -51,6 +83,9 @@ class CandidateStitcher:
         n_params = 3
         tile_shape = observations[0].tile_shape
         global_shape = observations[0].global_shape
+        basis_family = self._basis_family(config)
+        overlap_fraction = float(config.metadata.get("overlap_fraction", 0.25))
+        self._calibration_mf_detrend_loworder = max(global_shape) <= 128
 
         master_mask = np.zeros(tile_shape, dtype=bool)
         for obs in observations:
@@ -190,16 +225,14 @@ class CandidateStitcher:
         r_yy, r_xx = np.where(master_mask)
         r_y_norm = 2.0 * r_yy / max(tile_shape[0] - 1, 1) - 1.0
         r_x_norm = 2.0 * r_xx / max(tile_shape[1] - 1, 1) - 1.0
-        r_rad2 = r_x_norm**2 + r_y_norm**2
+        r_low_order = self._low_order_terms(r_y_norm, r_x_norm, basis_family)
         
         for idx in range(n_R_pixels):
             col = n_obs * n_params + idx
-            C_data.append(1.0); C_rows.append(c_idx); C_cols.append(col)
-            C_data.append(r_y_norm[idx]); C_rows.append(c_idx + 1); C_cols.append(col)
-            C_data.append(r_x_norm[idx]); C_rows.append(c_idx + 2); C_cols.append(col)
-            C_data.append(r_rad2[idx]); C_rows.append(c_idx + 3); C_cols.append(col)
-            C_data.append(r_x_norm[idx]**2 - r_y_norm[idx]**2); C_rows.append(c_idx + 4); C_cols.append(col)
-            C_data.append(2.0 * r_x_norm[idx] * r_y_norm[idx]); C_rows.append(c_idx + 5); C_cols.append(col)
+            for term_idx in range(r_low_order.shape[1]):
+                C_data.append(float(r_low_order[idx, term_idx]))
+                C_rows.append(c_idx + term_idx)
+                C_cols.append(col)
             
         c_idx += 6
             
@@ -248,7 +281,14 @@ class CandidateStitcher:
         pose_shifts = None
         
         for siac_iter in range(n_siac):
-            fused_z, fused_mask = self._fuse_for_calibration(observations, nuisances, R_map, tile_shape, global_shape)
+            fused_z, fused_mask = self._fuse_for_calibration(
+                observations,
+                nuisances,
+                R_map,
+                tile_shape,
+                global_shape,
+                basis_family=basis_family,
+            )
             if not np.any(fused_mask):
                 break
             
@@ -268,12 +308,29 @@ class CandidateStitcher:
             R_map = R_map_new
             
             # Refine nuisances every iteration using current calibration
-            nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
+            nuisances = self._refine_nuisances(
+                observations,
+                fused_z,
+                fused_mask,
+                R_map,
+                tile_shape,
+                nuisances,
+                basis_family=basis_family,
+            )
             
             if ref_delta < 1e-5:
                 break
 
-        pose_shifts = self._estimate_pose_shifts(observations, nuisances, R_map, fused_z, fused_mask, tile_shape, global_shape)
+        pose_shifts = self._estimate_pose_shifts(
+            observations,
+            nuisances,
+            R_map,
+            fused_z,
+            fused_mask,
+            tile_shape,
+            global_shape,
+            basis_family=basis_family,
+        )
         if np.any(pose_shifts):
             fused_z, fused_mask = self._fuse_for_calibration(
                 observations,
@@ -281,9 +338,18 @@ class CandidateStitcher:
                 R_map,
                 tile_shape,
                 global_shape,
+                basis_family=basis_family,
                 pose_shifts=pose_shifts,
             )
-            nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
+            nuisances = self._refine_nuisances(
+                observations,
+                fused_z,
+                fused_mask,
+                R_map,
+                tile_shape,
+                nuisances,
+                basis_family=basis_family,
+            )
 
         # R_map = self._project_degenerate_modes(R_map, master_mask)
 
@@ -298,7 +364,7 @@ class CandidateStitcher:
             y_norm = 2.0 * yy / max(tile_shape[0] - 1, 1) - 1.0
             x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
             
-            model = self._nuisance_model(nuisances[i], y_norm, x_norm)
+            model = self._nuisance_model(nuisances[i], y_norm, x_norm, basis_family=basis_family)
             
             z_corr = obs.z - model - R_map
             if pose_shifts is not None:
@@ -383,9 +449,19 @@ class CandidateStitcher:
         coeffs: np.ndarray,
         y_norm: np.ndarray,
         x_norm: np.ndarray,
+        basis_family: str = "radial",
     ) -> np.ndarray:
         padded = np.zeros(NUISANCE_DIM, dtype=float)
         padded[: min(len(coeffs), NUISANCE_DIM)] = coeffs[:NUISANCE_DIM]
+        if basis_family == "legendre":
+            return (
+                padded[0]
+                + padded[1] * y_norm
+                + padded[2] * x_norm
+                + padded[3] * (0.5 * (3.0 * y_norm**2 - 1.0))
+                + padded[4] * (0.5 * (3.0 * x_norm**2 - 1.0))
+                + padded[5] * (y_norm * x_norm)
+            )
         return (
             padded[0]
             + padded[1] * y_norm
@@ -395,14 +471,14 @@ class CandidateStitcher:
             + padded[5] * (2.0 * x_norm * y_norm)
         )
 
-    def _fuse_for_calibration(self, observations, nuisances, R_map, tile_shape, global_shape, pose_shifts=None):
+    def _fuse_for_calibration(self, observations, nuisances, R_map, tile_shape, global_shape, basis_family="radial", pose_shifts=None):
         sum_z = np.zeros(global_shape, dtype=float)
         count = np.zeros(global_shape, dtype=float)
         for i, obs in enumerate(observations):
             yy, xx = np.indices(tile_shape, dtype=float)
             y_norm = 2.0 * yy / max(tile_shape[0] - 1, 1) - 1.0
             x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
-            model = self._nuisance_model(nuisances[i], y_norm, x_norm)
+            model = self._nuisance_model(nuisances[i], y_norm, x_norm, basis_family=basis_family)
             z_corr = obs.z - model - R_map
             if pose_shifts is not None:
                 z_corr = self._apply_pose_shift(z_corr, pose_shifts[i])
@@ -426,7 +502,7 @@ class CandidateStitcher:
         fused_z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
         return fused_z, valid_mask
 
-    def _refine_nuisances(self, observations, fused_z, fused_mask, R_map, tile_shape, nuisances):
+    def _refine_nuisances(self, observations, fused_z, fused_mask, R_map, tile_shape, nuisances, basis_family="radial"):
         """Refine nuisance parameters using current fused surface and calibration map."""
         n_obs = len(observations)
         new_nuisances = nuisances.copy()
@@ -457,14 +533,11 @@ class CandidateStitcher:
             target = obs.z[yy, xx] - R_map[yy, xx] - fused_z[gy, gx]
             
             # Build design matrix for nuisance fit
-            A_nuis = np.column_stack([
-                np.ones(len(yy), dtype=float),
+            A_nuis = self._low_order_terms(
                 y_norm_full[yy, xx],
                 x_norm_full[yy, xx],
-                x_norm_full[yy, xx] ** 2 + y_norm_full[yy, xx] ** 2,
-                x_norm_full[yy, xx] ** 2 - y_norm_full[yy, xx] ** 2,
-                2.0 * x_norm_full[yy, xx] * y_norm_full[yy, xx],
-            ])
+                basis_family,
+            )
 
             A_reg = np.zeros((3, NUISANCE_DIM), dtype=float)
             A_reg[0, 3] = NUISANCE_REG_LAMBDA
@@ -494,6 +567,7 @@ class CandidateStitcher:
         nuisances,
         tile_shape,
         master_mask,
+        basis_family="radial",
     ):
         sum_r = np.zeros(tile_shape, dtype=float)
         sum_w = np.zeros(tile_shape, dtype=float)
@@ -506,7 +580,7 @@ class CandidateStitcher:
             yy_full, xx_full = np.indices(tile_shape, dtype=float)
             y_norm_full = 2.0 * yy_full / max(rows - 1, 1) - 1.0
             x_norm_full = 2.0 * xx_full / max(cols - 1, 1) - 1.0
-            model = self._nuisance_model(nuisances[i], y_norm_full, x_norm_full)
+            model = self._nuisance_model(nuisances[i], y_norm_full, x_norm_full, basis_family=basis_family)
             top = int(round(obs.center_xy[1] - (rows - 1) / 2.0))
             left = int(round(obs.center_xy[0] - (cols - 1) / 2.0))
             yy, xx = np.where(obs.valid_mask)
@@ -536,12 +610,13 @@ class CandidateStitcher:
             n_contributing[yy, xx] += (weights > 0.0).astype(float)
 
             mf_residual = residual
-            if CALIBRATION_MF_DETREND_LOWORDER:
+            if CALIBRATION_MF_DETREND_LOWORDER or getattr(self, "_calibration_mf_detrend_loworder", False):
                 mf_residual = self._remove_detector_low_order(
                     mf_residual,
                     yy,
                     xx,
                     tile_shape,
+                    basis_family=basis_family,
                 )
             residual_image = np.zeros(tile_shape, dtype=float)
             residual_image[yy, xx] = mf_residual
@@ -637,20 +712,14 @@ class CandidateStitcher:
         yy: np.ndarray,
         xx: np.ndarray,
         tile_shape: tuple[int, int],
+        basis_family: str = "radial",
     ) -> np.ndarray:
         if values.size == 0:
             return values
         rows, cols = tile_shape
         y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
         x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
-        design = np.column_stack([
-            np.ones(values.size, dtype=float),
-            y_norm,
-            x_norm,
-            x_norm**2 + y_norm**2,
-            x_norm**2 - y_norm**2,
-            2.0 * x_norm * y_norm,
-        ])
+        design = self._low_order_terms(y_norm, x_norm, basis_family)
         coeff, *_ = np.linalg.lstsq(design, values, rcond=None)
         return values - design @ coeff
 
@@ -714,7 +783,7 @@ class CandidateStitcher:
         result[:, :] = upsampled
         return result[:h, :w]
 
-    def _estimate_pose_shifts(self, observations, nuisances, R_map, fused_z, fused_mask, tile_shape, global_shape):
+    def _estimate_pose_shifts(self, observations, nuisances, R_map, fused_z, fused_mask, tile_shape, global_shape, basis_family="radial"):
         shifts = np.zeros((len(observations), 2), dtype=float)
         if not np.any(fused_mask):
             return shifts
@@ -724,7 +793,7 @@ class CandidateStitcher:
         x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
 
         for i, obs in enumerate(observations):
-            model = self._nuisance_model(nuisances[i], y_norm, x_norm)
+            model = self._nuisance_model(nuisances[i], y_norm, x_norm, basis_family=basis_family)
             z_corr = obs.z - model - R_map
             working_mask = self._get_eroded_mask(obs.valid_mask)
 
@@ -747,8 +816,9 @@ class CandidateStitcher:
             best_shift = np.zeros(2, dtype=float)
             best_score = np.inf
 
-            for dy in POSE_SHIFT_STEPS:
-                for dx in POSE_SHIFT_STEPS:
+            pose_steps = getattr(self, "_pose_shift_steps", POSE_SHIFT_STEPS)
+            for dy in pose_steps:
+                for dx in pose_steps:
                     shifted = self._apply_pose_shift(z_corr, (dy, dx))
                     local_z = shifted[ly_s:ly_e, lx_s:lx_e]
                     residual = local_z[local_mask] - fused_view[local_mask]

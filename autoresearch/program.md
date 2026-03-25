@@ -1,36 +1,40 @@
 # AR Stitching - Autonomous Optimization of optimized_stitching_algo.py
 
 This is an experiment to autonomously optimize a single stitching candidate for
-the stress scenario `scenarios/s17_highres_circular.yaml`.
+a robustness suite centered on the S17 digital-twin family rather than one
+fixed scenario.
 
 The editable candidate is:
 - `src/stitching/editable/optimized_stitching_algo.py`
 
 The recommended frozen evaluator is:
-- `autoresearch/eval_s17_single.py`
+- `autoresearch/eval_multi_scenario.py`
 
 That evaluator should be based on `src/stitching/harness/evaluator.py`,
-evaluate exactly one candidate file on exactly one scenario, and print a small
-parseable metric block. Once the loop starts, that evaluator is read-only.
+evaluate exactly one candidate file across a fixed multi-scenario suite, and
+print a small parseable metric block plus per-scenario diagnostics. Once the
+loop starts, that evaluator is read-only.
 
 ## Current Situation
 
-The current best accepted basin is:
+The previously optimized basin was tuned mainly on
+`scenarios/s17_highres_circular.yaml`. The new objective is to preserve that
+performance while avoiding regressions on nearby variants that stress:
 
-- `aggregate_rms ~= 0.974`
-- Zernike residual above mode 36 `~= 0.845`
-- `scenario_hf_retention = 0.000`
-- low-order residual budget `~= 0.49`
+- lower spatial resolution;
+- square instead of circular pupils;
+- lower overlap;
+- higher overlap.
 
 Interpretation:
 
-- low-order performance is already comparatively well optimized;
-- roughly 87% of the remaining RMS budget is now high-frequency residual;
-- exact-zero HF retention means the current failure is not well described as
-  "slightly too much final smoothing";
-- the remaining error is more likely driven by under-modeled detector-frame
-  calibration structure or structured misregistration that the current solver
-  cannot represent cleanly.
+- low-order performance on the original S17 case is already reasonably strong;
+- the remaining work is now robustness, not just squeezing one more marginal
+  gain out of a single configuration;
+- changes that improve one scenario by overfitting the scan geometry or pupil
+  shape are now regressions if they damage the rest of the suite;
+- detector-frame calibration separation and stable gauge handling remain the
+  most plausible high-value directions.
 
 Established negative results for the current code line:
 
@@ -57,10 +61,14 @@ To set up a new experiment:
 2. Create the branch: `git checkout -b autoresearch/<tag>`.
 3. Read the in-scope files:
    - `src/stitching/editable/optimized_stitching_algo.py` - the only editable file. This is the current candidate stitcher.
-   - `autoresearch/eval_s17_single.py` - frozen evaluation harness. Do not modify after setup.
+   - `autoresearch/eval_multi_scenario.py` - frozen evaluation harness. Do not modify after setup.
    - `src/stitching/harness/evaluator.py` - trusted evaluation entry point and guardrails. Read-only.
    - `src/stitching/trusted/eval/metrics.py` - trusted metric definitions, especially detrended RMS. Read-only.
-   - `scenarios/s17_highres_circular.yaml` - the fixed stress scenario. Read-only.
+   - `scenarios/s17_highres_circular.yaml` - primary high-resolution annular circular stress case. Read-only.
+   - `scenarios/s17_lowres_circular.yaml` - low-resolution circular variant. Read-only.
+   - `scenarios/s17_highres_square.yaml` - square-pupil high-resolution variant. Read-only.
+   - `scenarios/s17_highres_low_overlap.yaml` - sparse-overlap high-resolution variant. Read-only.
+   - `scenarios/s17_highres_high_overlap.yaml` - dense-overlap high-resolution variant. Read-only.
    - `src/stitching/editable/gls/baseline.py` - simplest structural baseline. Read-only.
    - `src/stitching/editable/gls_robust/baseline.py` - robust GLS reference. Read-only.
    - `src/stitching/editable/scs/baseline.py` - simultaneous calibration + stitching reference. Read-only.
@@ -71,11 +79,16 @@ To set up a new experiment:
    - `docs/Optimisation_Robuste_Stitching_Optique_Metrologie_wrapped.txt` - domain strategy notes on robust stitching, calibration separation, IRLS, Tukey/Huber, drift and retrace handling. Read-only.
    - `docs/recallage_subpixel.md` - constrained sub-pixel registration notes. Read-only.
 4. Verify prerequisites:
-   - `autoresearch/eval_s17_single.py` exists.
+   - `autoresearch/eval_multi_scenario.py` exists.
    - It loads `src/stitching/editable/optimized_stitching_algo.py`.
-   - It uses `scenarios/s17_highres_circular.yaml`.
+   - It evaluates the fixed robustness suite:
+     - `scenarios/s17_highres_circular.yaml`
+     - `scenarios/s17_lowres_circular.yaml`
+     - `scenarios/s17_highres_square.yaml`
+     - `scenarios/s17_highres_low_overlap.yaml`
+     - `scenarios/s17_highres_high_overlap.yaml`
    - It runs successfully with:
-     `python autoresearch/eval_s17_single.py --candidate src/stitching/editable/optimized_stitching_algo.py --scenario scenarios/s17_highres_circular.yaml`
+     `python autoresearch/eval_multi_scenario.py --candidate src/stitching/editable/optimized_stitching_algo.py --scenarios scenarios/s17_highres_circular.yaml scenarios/s17_lowres_circular.yaml scenarios/s17_highres_square.yaml scenarios/s17_highres_low_overlap.yaml scenarios/s17_highres_high_overlap.yaml`
    - If imports fail because `stitching` is not on `sys.path`, the frozen evaluator must fix that internally by prepending the repo `src/` directory before the loop begins.
 5. Initialize local experiment state:
    - Create `autoresearch/results.tsv` with just the header row.
@@ -95,9 +108,11 @@ surface in a way that looks visually nice but worsens trusted RMS.
 
 ## Perturbations in the measurement
 
-The fixed scenario `scenarios/s17_highres_circular.yaml` contains multiple
-realistic perturbations at once. Treat them as separate error sources that must
-be mitigated without mixing them together.
+The S17 robustness suite contains multiple realistic perturbations. The
+original `s17_highres_circular` case still carries the hardest coupled digital
+twin effects, and the new variants probe whether the same solver survives
+changes in resolution, overlap, and pupil geometry. Treat these as separate
+error sources that must be mitigated without mixing them together.
 
 - Pose bias and pose jitter.
   The sub-aperture centers are not perfectly where the nominal scan says they
@@ -155,10 +170,10 @@ frozen scalar metric for the loop.
   helper functions, and internal control flow.
 
 **What you CANNOT do:**
-- Do not modify `autoresearch/eval_s17_single.py` after setup. It is frozen.
+- Do not modify `autoresearch/eval_multi_scenario.py` after setup. It is frozen.
 - Do not modify `src/stitching/harness/evaluator.py`.
 - Do not modify `src/stitching/trusted/eval/metrics.py`.
-- Do not modify `scenarios/s17_highres_circular.yaml`.
+- Do not modify any frozen suite scenario YAML used by the evaluator.
 - Do not modify any baseline files in `src/stitching/editable/`.
 - Do not install new packages or add dependencies.
 - Do not change the `CandidateStitcher.reconstruct(...)` signature.
@@ -173,14 +188,14 @@ frozen scalar metric for the loop.
 **The goal is simple: get the lowest `aggregate_rms`.**
 
 For this program, `aggregate_rms` should come from
-`evaluate_candidate_on_suite(...)` with a one-scenario suite containing only
-`scenarios/s17_highres_circular.yaml`. Because that scenario has
-`ignore_tilt: true`, the trusted stack will effectively optimize detrended RMS,
-which is the right target here.
+`evaluate_candidate_on_suite(...)` across the frozen multi-scenario suite. The
+suite may mix detrended and raw acceptance depending on each scenario's
+metadata, and the evaluator must preserve that trusted policy per scenario.
 
 Why this metric matters:
 - It measures reconstruction error against known truth using the trusted harness.
 - It already respects scenario-level detrending rules.
+- It penalizes fragile improvements that only work on one scan geometry.
 - It aligns with the repository leaderboard and accepted-candidate ranking.
 
 Metric policy for this loop:
@@ -190,8 +205,8 @@ Metric policy for this loop:
   as `discard` unless they deliver a clearly material RMS improvement over the
   current best. Treat runs above 100 s as automatic `discard` unless you are
   explicitly running a one-off diagnosis.
-- Side diagnostics only: `scenario_mae_detrended`, `scenario_hf_retention`, and
-  any optional calibration diagnostics you inspect manually
+- Side diagnostics only: per-scenario RMS/MAE/HF retention, Zernike residual,
+  and any optional calibration diagnostics you inspect manually
 
 Do not switch to a weighted composite score unless you can defend the weights
 mathematically. In this project the safest decision rule is primary metric plus
@@ -215,13 +230,12 @@ edits to `src/stitching/editable/optimized_stitching_algo.py`.
 ## Frozen evaluator contract
 
 The best eval strategy for this repo is a small frozen Python script:
-`autoresearch/eval_s17_single.py`
+`autoresearch/eval_multi_scenario.py`
 
 That script should:
 - insert the repo `src/` directory into `sys.path`;
 - load the candidate with `load_candidate_module(...)`;
-- call `evaluate_candidate_on_suite(...)` on a one-element list containing
-  `Path("scenarios/s17_highres_circular.yaml")`;
+- call `evaluate_candidate_on_suite(...)` on the fixed multi-scenario suite;
 - print a compact parseable summary and exit non-zero on crashes.
 
 Recommended printed lines:
@@ -230,14 +244,25 @@ Recommended printed lines:
 ---
 aggregate_rms: 0.12345678
 aggregate_mae: 0.10123456
-max_rms: 0.12345678
+max_rms: 0.18223344
+min_rms: 0.08221100
+std_rms: 0.03112233
 total_runtime_sec: 18.42
-num_accepted: 1
-num_scenarios: 1
+num_accepted: 5
+num_scenarios: 5
 accepted_all: 1
-scenario_id: s17_highres_circular
-scenario_rms_detrended: 0.12345678
-scenario_hf_retention: 0.81234567
+worst_scenario: s17_highres_square
+best_scenario: s17_lowres_circular
+=== SCENARIO_DETAILS ===
+[01] s17_highres_circular
+  status: ACCEPT
+  rms_detrended: 0.12345678
+  hf_retention: 0.81234567
+=== END_SCENARIO_DETAILS ===
+=== AGENT_SUMMARY ===
+performance_breakdown:
+  good_rms_lt_1nm: 5/5
+=== END_AGENT_SUMMARY ===
 ```
 
 Keep the evaluator minimal. Do not generate plots. Do not call
@@ -252,14 +277,25 @@ Once the evaluation finishes it should print a summary like this:
 ---
 aggregate_rms: 0.12345678
 aggregate_mae: 0.10123456
-max_rms: 0.12345678
+max_rms: 0.18223344
+min_rms: 0.08221100
+std_rms: 0.03112233
 total_runtime_sec: 18.42
-num_accepted: 1
-num_scenarios: 1
+num_accepted: 5
+num_scenarios: 5
 accepted_all: 1
-scenario_id: s17_highres_circular
-scenario_rms_detrended: 0.12345678
-scenario_hf_retention: 0.81234567
+worst_scenario: s17_highres_square
+best_scenario: s17_lowres_circular
+=== SCENARIO_DETAILS ===
+[01] s17_highres_circular
+  status: ACCEPT
+  rms_detrended: 0.12345678
+  hf_retention: 0.81234567
+=== END_SCENARIO_DETAILS ===
+=== AGENT_SUMMARY ===
+performance_breakdown:
+  good_rms_lt_1nm: 5/5
+=== END_AGENT_SUMMARY ===
 ```
 
 Required completion checklist after every run:
@@ -282,6 +318,12 @@ Also check acceptance:
 
 ```text
 grep "^accepted_all:" autoresearch/run.log
+```
+
+Also inspect the current limiter:
+
+```text
+grep "^worst_scenario:" autoresearch/run.log
 ```
 
 ## Logging results
@@ -361,11 +403,12 @@ LOOP FOREVER:
 3. Modify `src/stitching/editable/optimized_stitching_algo.py` with one coherent experimental idea.
 4. Commit the change with a short hypothesis-focused message.
 5. Run the frozen evaluator:
-   `python autoresearch/eval_s17_single.py --candidate src/stitching/editable/optimized_stitching_algo.py --scenario scenarios/s17_highres_circular.yaml > autoresearch/run.log 2>&1`
+   `python autoresearch/eval_multi_scenario.py --candidate src/stitching/editable/optimized_stitching_algo.py --scenarios scenarios/s17_highres_circular.yaml scenarios/s17_lowres_circular.yaml scenarios/s17_highres_square.yaml scenarios/s17_highres_low_overlap.yaml scenarios/s17_highres_high_overlap.yaml > autoresearch/run.log 2>&1`
 6. Read out:
    - `grep "^aggregate_rms:" autoresearch/run.log`
    - `grep "^accepted_all:" autoresearch/run.log`
    - `grep "^total_runtime_sec:" autoresearch/run.log`
+   - `grep "^worst_scenario:" autoresearch/run.log`
 7. If the metric line is missing, the run crashed.
    Read `tail -n 50 autoresearch/run.log`, fix trivial issues if appropriate,
    otherwise discard the idea and move on.
@@ -468,7 +511,8 @@ approaches plateau:
   positioning-only solve (reference frozen) and a reference-only solve (poses
   frozen). CS first calibrates then stitches; SC first stitches then calibrates.
   All three are valid; the autoresearch loop should empirically select among
-  them based on which yields the lowest RMS on this specific scenario.
+  them based on which yields the lowest robust suite RMS rather than the best
+  single-scenario number.
 
 - **Biconvex lifting (SparseLift)** — When alternating minimization stalls due to
   severe non-convexity, "lift" the bilinear problem into a higher-dimensional
@@ -509,7 +553,7 @@ approaches plateau:
 - Letting edge pixels dominate overlap equations.
 - Replacing trusted RMS metrics with visual smoothness proxies.
 - Breaking deterministic behavior with uncontrolled randomness.
-- Overfitting to S17 noise rather than the true underlying surface.
+- Overfitting to one S17 variant rather than the shared underlying problem.
 
 ### If progress stalls
 

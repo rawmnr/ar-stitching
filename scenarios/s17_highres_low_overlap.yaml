@@ -1,0 +1,61 @@
+scenario_id: s17_highres_low_overlap
+description: High-resolution digital twin (256x256) with low overlap (0.15) to test robustness to sparse overlap.
+grid_shape: [256, 256]
+tile_shape: [128, 128]
+pixel_size: 1.0
+pattern_type: grid
+overlap_fraction: 0.15
+baseline_name: mean
+seed: 18
+gaussian_noise_std: 1
+outlier_fraction: 0
+reference_bias: 1
+retrace_error: 0.005
+rotation_deg: [0.0]
+truth_basis: zernike
+truth_coefficients: [0.0, 0.0, 0.0, 5, 6, -3, 3, 3, -1, 1, 3, -2, 0.05, -0.1]
+truth_pupil: circular
+truth_radius_fraction: 0.48
+optical_psf_sigma: 0.8
+surface_drift_coefficients: []
+surface_bending_drift: 0.0
+mid_spatial_ripple_std: 1.0
+detector_pupil: circular
+detector_radius_fraction: 0.48
+detector_edge_roll_off: 1
+realized_pose_bias_xy: [1, -1]
+realized_pose_drift_std: 1
+realized_pose_error_std: 2
+interpolation_order: 3
+geometric_retrace_error: 0.1
+slope_retrace_error: 0.0
+reference_bias_hf_amplitude: 0.5
+reference_bias_drift_step: 0.4
+reference_bias_coefficients:
+  - 0.0
+  - 0.05
+  - -0.03
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+  - 3.0
+  - 1.0
+  - 1.0
+  - 0.5
+  - -0.002
+  - 0.004
+  - 0.001
+  - 0.002
+ignore_piston: true
+ignore_tilt: true
+low_frequency_noise_std: 2
+subaperture_dc_step: 0.0
+subaperture_tip: 0.0
+subaperture_tilt: 0.0
+subaperture_focus: 0.0
+alignment_term: [0, 1, 2]
+alignment_random_coeff: 10.0
+metadata:
+  instrument_name: VirtualInterferometer_v2
+  operator: gemini_cli

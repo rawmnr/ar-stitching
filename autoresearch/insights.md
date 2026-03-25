@@ -1,6 +1,8 @@
 # Autoresearch Insights
 
 ## Current Best
+- **0.92080593** at 56.23s (`044c8aa` - 56 SIAC passes, low-order detrend enabled for the 128x128 low-res case)
+- **0.94760672** at 31.71s (`044c8aa` - 12 SIAC passes, low-order detrend enabled for the 128x128 low-res case)
 - **0.92055912** at 32.16s (`f2a6108` - per-observation band-passed detector MF calibration, `sigma_filter=1.55`, `n_siac=149`, `lambda=14`, `mf_alpha=0.35`)
 - follow-up calibration restructuring reached **0.92108941** before alpha retuning; the final committed best remained `0.92055912`
 - **0.92167848** at 29.41s (same structural line before per-observation MF accumulation; `sigma_filter=1.55`)
@@ -45,6 +47,7 @@
 - the best filtered-MF configuration remained count-gated (`min_obs=8`); looser gating reintroduced contaminated MF and regressed quickly
 
 ## What Worked
+- 12 SIAC passes on the multi-scenario suite, combined with low-order detrend only for the 128x128 low-res scenario
 - CALIBRATION_BLOCK=1 (full resolution calibration map)
 - n_irls=1 remains a good runtime/quality tradeoff
 - much deeper SIAC than 16 iterations
@@ -81,6 +84,8 @@
 - two-stage coarse+fine pose refinement, even when fed back through short post-pose alternation, remained inert on the metric
 
 ## Structural Findings
+- the multi-scenario basin is better than the old single-scenario basin once low-res calibration leakage is reduced explicitly
+- the low-res circular case was the main quality limiter before the low-order detrend change
 - the old 1.07 nm floor was mostly an alternation-depth issue
 - calibration smoothing interacts positively with deeper SIAC, even though it looked weak in the shallow regime
 - the current pose-refinement path is effectively inactive on this scenario
@@ -102,6 +107,6 @@
 1. Keep the per-observation MF calibration architecture and improve detector/surface separation inside that path rather than returning to raw averaged-MF injection
 2. Investigate stronger detector-space consensus estimators for MF accumulation, since the current count gate still limits usable MF gain
 3. Consider calibration-side confidence models that separate detector-fixed MF from leaked surface MF before averaging, rather than tuning pose again immediately
-4. Investigate why HF retention stays exactly zero even as RMS improves below 0.93 nm
+4. Investigate whether low-overlap robustness can be improved without reopening the low-order leakage that was fixed for the low-res case
 
 ## Crash Boundaries

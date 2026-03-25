@@ -1,0 +1,60 @@
+scenario_id: s17_highres_square
+description: High-resolution digital twin (256x256) with square pupils to test robustness to non-circular apertures.
+grid_shape: [256, 256]
+tile_shape: [96, 96]
+pixel_size: 1.0
+pattern_type: grid
+overlap_fraction: 0.35
+baseline_name: mean
+seed: 18
+gaussian_noise_std: 0.05
+outlier_fraction: 0
+reference_bias: 0.0
+retrace_error: 0.0
+rotation_deg: [0.0]
+truth_basis: zernike
+truth_coefficients:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 5.0
+  - 6.0
+  - -3.0
+  - 3.0
+  - 3.0
+  - -1.0
+  - 1.0
+  - 3.0
+  - -2.0
+  - 0.05
+  - -0.1
+truth_pupil: circular
+truth_radius_fraction: 0.48
+optical_psf_sigma: 0.8
+surface_drift_coefficients: []
+surface_bending_drift: 0.0
+mid_spatial_ripple_std: 0.0
+detector_pupil: square
+detector_radius_fraction: 0.48
+detector_edge_roll_off: 1
+realized_pose_bias_xy: [0.0, 0.0]
+realized_pose_drift_std: 0.0
+realized_pose_error_std: 0.0
+interpolation_order: 3
+geometric_retrace_error: 0.0
+slope_retrace_error: 0.0
+reference_bias_hf_amplitude: 0.0
+reference_bias_drift_step: 0.0
+reference_bias_coefficients: []
+ignore_piston: true
+ignore_tilt: true
+low_frequency_noise_std: 0.0
+subaperture_dc_step: 0.0
+subaperture_tip: 0.0
+subaperture_tilt: 0.0
+subaperture_focus: 0.0
+alignment_term: [0, 1, 2]
+alignment_random_coeff: 10.0
+metadata:
+  instrument_name: VirtualInterferometer_v2
+  operator: gemini_cli
