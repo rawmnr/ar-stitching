@@ -9,7 +9,7 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 
 EDGE_EROSION_PX = 1
 FEATHER_WIDTH = 0.05
-SOLVE_FEATHER_WIDTH = 0.45
+SOLVE_FEATHER_WIDTH = 0.495
 sigma_filter = 0.9
 n_irls = 8
 n_siac = 5
@@ -224,7 +224,7 @@ class CandidateStitcher:
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
             R_map = 0.6 * R_map + 0.4 * R_map_new
             
-            if ref_delta < 5e-5:
+            if ref_delta < 1e-5:
                 break
         
         R_map = self._project_degenerate_modes(R_map, master_mask)

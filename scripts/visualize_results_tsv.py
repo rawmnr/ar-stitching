@@ -46,6 +46,11 @@ def _parse_args() -> argparse.Namespace:
         default="Autoresearch results.tsv progress",
         help="Plot title.",
     )
+    parser.add_argument(
+        "--include-discarded",
+        action="store_true",
+        help="Also plot discard/crash rows instead of showing keep-only progress.",
+    )
     return parser.parse_args()
 
 
@@ -70,7 +75,13 @@ def _format_commit(commit: str) -> str:
     return commit[:7] if len(commit) > 7 else commit
 
 
-def _plot_results(df: pd.DataFrame, metric_column: str, title: str, output_path: Path) -> None:
+def _plot_results(
+    df: pd.DataFrame,
+    metric_column: str,
+    title: str,
+    output_path: Path,
+    include_discarded: bool,
+) -> None:
     if metric_column not in df.columns and metric_column != "aggregate_rms":
         raise ValueError(f"Metric column not found: {metric_column}")
 
@@ -82,23 +93,31 @@ def _plot_results(df: pd.DataFrame, metric_column: str, title: str, output_path:
     if plot_df.empty:
         raise ValueError("No numeric metric values found to plot.")
 
-    plot_df["running_best"] = plot_df["metric"].cummin()
-    status_order = ["keep", "discard", "crash"]
+    if include_discarded:
+        plot_df = plot_df.copy()
+        plot_df["running_best"] = plot_df["metric"].cummin()
+        status_order = ["keep", "discard", "crash"]
+    else:
+        plot_df = plot_df[plot_df["status"] == "keep"].copy()
+        if plot_df.empty:
+            raise ValueError("No keep rows found to plot.")
+        plot_df["running_best"] = plot_df["metric"].cummin()
+        status_order = ["keep"]
 
     fig, ax = plt.subplots(figsize=(14, 7), dpi=150)
     ax.grid(True, alpha=0.2)
 
-    # Plot the raw metric as a faint line so changes over time remain visible.
+    # Plot the metric as a faint line so changes over time remain visible.
     ax.plot(
         plot_df["exp"],
         plot_df["metric"],
         color="#7f8c8d",
         linewidth=1.2,
         alpha=0.55,
-        label=f"{metric_column} per run",
+        label=f"{metric_column} per keep" if not include_discarded else f"{metric_column} per run",
     )
 
-    # Scatter points by status to mirror the keep/discard/crash bookkeeping.
+    # Scatter points by status to mirror the bookkeeping when requested.
     for status in status_order:
         subset = plot_df[plot_df["status"] == status]
         if subset.empty:
@@ -174,7 +193,7 @@ def main() -> None:
     output_path = Path(args.output)
 
     df = _load_results(tsv_path)
-    _plot_results(df, args.metric, args.title, output_path)
+    _plot_results(df, args.metric, args.title, output_path, args.include_discarded)
     print(f"Saved plot to {output_path}")
 
 
