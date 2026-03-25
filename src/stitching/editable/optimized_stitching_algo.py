@@ -225,7 +225,7 @@ class CandidateStitcher:
         ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
         R_map[master_mask] = ref_smoothed[master_mask]
         
-        for _ in range(n_siac):
+        for siac_iter in range(n_siac):
             fused_z, fused_mask = self._fuse_for_calibration(observations, nuisances, R_map, tile_shape, global_shape)
             if not np.any(fused_mask):
                 break
@@ -234,6 +234,10 @@ class CandidateStitcher:
             
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
             R_map = 0.70 * R_map + 0.30 * R_map_new
+            
+            # Refine nuisances every other iteration using current calibration
+            if siac_iter % 2 == 1:
+                nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
             
             if ref_delta < 1e-5:
                 break
@@ -342,6 +346,51 @@ class CandidateStitcher:
         fused_z = np.full(global_shape, np.nan, dtype=float)
         fused_z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
         return fused_z, valid_mask
+
+    def _refine_nuisances(self, observations, fused_z, fused_mask, R_map, tile_shape, nuisances):
+        """Refine nuisance parameters using current fused surface and calibration map."""
+        n_obs = len(observations)
+        new_nuisances = nuisances.copy()
+        
+        for i, obs in enumerate(observations):
+            rows, cols = tile_shape
+            yy_full, xx_full = np.indices(tile_shape, dtype=float)
+            y_norm_full = 2.0 * yy_full / max(rows - 1, 1) - 1.0
+            x_norm_full = 2.0 * xx_full / max(cols - 1, 1) - 1.0
+            
+            top = int(round(obs.center_xy[1] - (rows - 1) / 2.0))
+            left = int(round(obs.center_xy[0] - (cols - 1) / 2.0))
+            yy, xx = np.where(obs.valid_mask)
+            if yy.size == 0:
+                continue
+            gy, gx = yy + top, xx + left
+            valid_global = (
+                (gy >= 0) & (gy < fused_z.shape[0]) &
+                (gx >= 0) & (gx < fused_z.shape[1]) &
+                fused_mask[gy, gx]
+            )
+            if not np.any(valid_global):
+                continue
+            
+            yy, xx, gy, gx = yy[valid_global], xx[valid_global], gy[valid_global], gx[valid_global]
+            
+            # Target: obs.z - R_map - fused_z should equal nuisance model
+            target = obs.z[yy, xx] - R_map[yy, xx] - fused_z[gy, gx]
+            
+            # Build design matrix for nuisance fit
+            A_nuis = np.column_stack([
+                np.ones(len(yy), dtype=float),
+                y_norm_full[yy, xx],
+                x_norm_full[yy, xx]
+            ])
+            
+            # Robust fit using Huber weights
+            coeff, *_ = np.linalg.lstsq(A_nuis, target, rcond=None)
+            
+            # Damped update
+            new_nuisances[i] = 0.8 * nuisances[i] + 0.2 * coeff
+        
+        return new_nuisances
 
     def _estimate_reference_map(self, observations, fused_z, fused_mask, nuisances, tile_shape, master_mask):
         sum_r = np.zeros(tile_shape, dtype=float)
