@@ -303,6 +303,18 @@ After every 10 experiments, update it with:
 If 5 consecutive experiments fail to improve, read `autoresearch/insights.md`
 before trying the next direction.
 
+Exploration rule when progress stalls:
+- If the best `aggregate_rms` has not improved after 5 kept experiments, the
+  next experiment must change the solver family or the error model, not just a
+  scalar hyperparameter.
+- Prefer moving to a different axis of change: overlap assembly, robust loss,
+  fusion weighting, calibration estimation, pose correction, gauge handling, or
+  regularization.
+- Do not spend more than 2 consecutive experiments on the same local variant if
+  the metric stays flat or regresses.
+- If the running best is near a plateau, try a qualitatively new idea even if
+  previous tweaks were still reducing runtime.
+
 ## The experiment loop
 
 The experiment runs on a dedicated branch such as `autoresearch/<tag>`.
@@ -330,6 +342,11 @@ LOOP FOREVER:
    - the implementation remains coherent and not obviously overfit
 10. If the experiment is equal or worse, or fails acceptance, revert to the
     previous good commit.
+
+When the loop gets stuck near the current best, treat that as a signal to
+explore a new family of ideas rather than another small parameter sweep. The
+goal is not to tunnel indefinitely on one local neighborhood of the design
+space.
 
 Do not commit `autoresearch/results.tsv`, `autoresearch/run.log`, or
 `autoresearch/insights.md`.
