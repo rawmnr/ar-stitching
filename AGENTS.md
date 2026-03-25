@@ -4,6 +4,18 @@
 
 This repository is an algorithm benchmark and autoresearch playground for **sub-aperture stitching / interferometric reconstruction**. Agents working in this repo must optimize reconstruction quality **without breaking the experimental harness**.
 
+## Autoresearch instructions
+
+For any run under `autoresearch/`, treat `autoresearch/program.md` as the
+authoritative source of truth for the experiment loop. It defines the editable
+candidate, the frozen evaluator, the logging rules for `autoresearch/results.tsv`,
+the note-taking rules for `autoresearch/insights.md`, and the runtime / acceptance
+guardrails.
+
+Do not duplicate those run-specific rules in `AGENTS.md`, and do not add
+conflicting thresholds or workflow steps here. If the autoresearch procedure
+changes, update `autoresearch/program.md` only.
+
 The current codebase compares several editable baselines:
 
 * `GLS Standard`
