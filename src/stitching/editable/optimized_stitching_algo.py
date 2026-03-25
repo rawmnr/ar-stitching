@@ -174,7 +174,7 @@ class CandidateStitcher:
             
         Constraint = sp.csr_matrix((C_data, (C_rows, C_cols)), shape=(c_idx, n_obs * n_params + n_R_pixels))
         
-        lambda_reg = 2e-4
+        lambda_reg = 3e-4
         
         robust_weights = np.ones(row_count, dtype=float)
         x = np.zeros(n_obs * n_params + n_R_pixels, dtype=float)
