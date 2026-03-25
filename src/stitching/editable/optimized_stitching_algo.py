@@ -1,4 +1,4 @@
-"""Simultaneous Calibration and Stitching (SCS) with Alternating Refinement."""
+"""Simultaneous Calibration and Stitching (SCS) - Simplified SCS with SCS gauge + IRLS."""
 from __future__ import annotations
 
 import numpy as np
@@ -7,10 +7,9 @@ import scipy.sparse.linalg as spla
 from scipy import ndimage
 from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertureObservation
 
-# Configuration anti-artefacts
-EDGE_EROSION_PX = 1
-FEATHER_WIDTH = 0.05
-SOLVE_FEATHER_WIDTH = 0.45
+EDGE_EROSION_PX = 2
+FEATHER_WIDTH = 0.20
+sigma_filter = 1.2
 
 class CandidateStitcher:
     def reconstruct(
@@ -31,7 +30,6 @@ class CandidateStitcher:
         tile_shape = observations[0].tile_shape
         global_shape = observations[0].global_shape
 
-        # Master mask for reference map (union of all local valid_masks)
         master_mask = np.zeros(tile_shape, dtype=bool)
         for obs in observations:
             master_mask |= obs.valid_mask
@@ -42,12 +40,10 @@ class CandidateStitcher:
 
         all_obs_indices, all_flat_indices, all_z = [], [], []
         all_xn, all_yn, all_r_idx = [], [], []
-        all_solve_w = []
 
         for i, obs in enumerate(observations):
             top = int(round(obs.center_xy[1] - (tile_shape[0] - 1) / 2.0))
             left = int(round(obs.center_xy[0] - (tile_shape[1] - 1) / 2.0))
-            solve_weights = self._smooth_feather_weights(obs.valid_mask, feather_width=SOLVE_FEATHER_WIDTH)
             
             yy, xx = np.where(obs.valid_mask)
             gy, gx = yy + top, xx + left
@@ -65,7 +61,6 @@ class CandidateStitcher:
             all_xn.append(x_norm)
             all_yn.append(y_norm)
             all_r_idx.append(R_idx_map[yy, xx])
-            all_solve_w.append(solve_weights[yy, xx])
 
         obs_idx = np.concatenate(all_obs_indices)
         flat_idx = np.concatenate(all_flat_indices)
@@ -73,7 +68,6 @@ class CandidateStitcher:
         xn_vals = np.concatenate(all_xn)
         yn_vals = np.concatenate(all_yn)
         r_idx_vals = np.concatenate(all_r_idx)
-        solve_w_vals = np.concatenate(all_solve_w)
 
         sort_order = np.argsort(flat_idx)
         obs_idx = obs_idx[sort_order]
@@ -82,17 +76,14 @@ class CandidateStitcher:
         xn_vals = xn_vals[sort_order]
         yn_vals = yn_vals[sort_order]
         r_idx_vals = r_idx_vals[sort_order]
-        solve_w_vals = solve_w_vals[sort_order]
 
         diff = np.diff(flat_idx)
         boundaries = np.where(diff > 0)[0] + 1
         boundaries = np.concatenate(([0], boundaries, [len(flat_idx)]))
 
         rows_a, cols_a, data_a, b = [], [], [], []
-        row_weights = []
         row_count = 0
         
-        # Build pairwise overlap equations
         for s, e in zip(boundaries[:-1], boundaries[1:]):
             if e - s < 2:
                 continue
@@ -109,24 +100,19 @@ class CandidateStitcher:
                 oth_xn = xn_vals[j+1]
                 oth_yn = yn_vals[j+1]
                 oth_r = r_idx_vals[j+1]
-                row_weights.append(0.5 * (solve_w_vals[j] + solve_w_vals[j + 1]))
                 
-                # Nuisance terms for reference observation
                 rows_a.extend([row_count] * 3)
                 cols_a.extend([ref_o * n_params + k for k in range(3)])
                 data_a.extend([1.0, ref_yn, ref_xn])
                 
-                # R map term for reference
                 rows_a.append(row_count)
                 cols_a.append(n_obs * n_params + ref_r)
                 data_a.append(1.0)
                 
-                # Nuisance terms for other observation
                 rows_a.extend([row_count] * 3)
                 cols_a.extend([oth_o * n_params + k for k in range(3)])
                 data_a.extend([-1.0, -oth_yn, -oth_xn])
                 
-                # R map term for other
                 rows_a.append(row_count)
                 cols_a.append(n_obs * n_params + oth_r)
                 data_a.append(-1.0)
@@ -136,21 +122,16 @@ class CandidateStitcher:
 
         A = sp.csr_matrix((data_a, (rows_a, cols_a)), shape=(row_count, n_obs * n_params + n_R_pixels))
         b_np = np.array(b)
-        row_weights_np = np.asarray(row_weights, dtype=float) if row_weights else np.ones(row_count, dtype=float)
-        row_weights_np = np.clip(row_weights_np, 1e-6, None)
         
-        # Constraints
         C_data, C_rows, C_cols = [], [], []
         c_idx = 0
         
-        # 1. Piston constraint on nuisances (sum of pistons = 0)
         for i in range(n_obs):
             C_data.append(1.0)
             C_rows.append(c_idx)
             C_cols.append(i * n_params)
         c_idx += 1
         
-        # 2. Tip/Tilt constraints on nuisances
         for i in range(n_obs):
             C_data.append(1.0)
             C_rows.append(c_idx)
@@ -163,7 +144,6 @@ class CandidateStitcher:
             C_cols.append(i * n_params + 2)
         c_idx += 1
         
-        # 3. Gauge constraints on R_map (zero piston, zero tip, zero tilt, and zero power/astigmatism)
         r_yy, r_xx = np.where(master_mask)
         r_y_norm = 2.0 * r_yy / max(tile_shape[0] - 1, 1) - 1.0
         r_x_norm = 2.0 * r_xx / max(tile_shape[1] - 1, 1) - 1.0
@@ -171,34 +151,24 @@ class CandidateStitcher:
         
         for idx in range(n_R_pixels):
             col = n_obs * n_params + idx
-            
-            # sum(R) = 0
             C_data.append(1.0); C_rows.append(c_idx); C_cols.append(col)
-            # sum(R * y) = 0
             C_data.append(r_y_norm[idx]); C_rows.append(c_idx + 1); C_cols.append(col)
-            # sum(R * x) = 0
             C_data.append(r_x_norm[idx]); C_rows.append(c_idx + 2); C_cols.append(col)
-            
-            # Break power/astigmatism degeneracies (Z4, Z5, Z6)
-            # sum(R * (x^2 + y^2)) = 0 (Defocus)
             C_data.append(r_rad2[idx]); C_rows.append(c_idx + 3); C_cols.append(col)
-            # sum(R * (x^2 - y^2)) = 0 (Astigmatism)
             C_data.append(r_x_norm[idx]**2 - r_y_norm[idx]**2); C_rows.append(c_idx + 4); C_cols.append(col)
-            # sum(R * (2xy)) = 0 (Astigmatism)
             C_data.append(2.0 * r_x_norm[idx] * r_y_norm[idx]); C_rows.append(c_idx + 5); C_cols.append(col)
             
         c_idx += 6
             
         Constraint = sp.csr_matrix((C_data, (C_rows, C_cols)), shape=(c_idx, n_obs * n_params + n_R_pixels))
         
-        # Small Tikhonov regularization for completely unseen pixels or singular modes
         lambda_reg = 1e-6
         
         robust_weights = np.ones(row_count, dtype=float)
         x = np.zeros(n_obs * n_params + n_R_pixels, dtype=float)
         
-        for _ in range(8):
-            w_sqrt = np.sqrt(robust_weights * row_weights_np)
+        for _ in range(5):
+            w_sqrt = np.sqrt(robust_weights)
             W = sp.diags(w_sqrt)
             A_w = W @ A
             b_w = w_sqrt * b_np
@@ -228,30 +198,12 @@ class CandidateStitcher:
         R_map = np.zeros(tile_shape, dtype=float)
         R_map[master_mask] = R_vals
         
-        # Apply a modest low-pass filter to reduce the re-projection of
-        # high-frequency temporal noise into the static calibration map.
-        sigma_filter = 0.9
         ref_filled = np.where(master_mask, R_map, 0.0)
         ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
         R_map[master_mask] = ref_smoothed[master_mask]
         
-        # SIAC-style alternating calibration refinement
-        for _ in range(3):
-            fused_z, fused_mask = self._fuse_for_calibration(observations, nuisances, R_map, tile_shape, global_shape)
-            if not np.any(fused_mask):
-                break
-            
-            R_map_new = self._estimate_reference_map(observations, fused_z, fused_mask, nuisances, tile_shape, master_mask)
-            
-            ref_delta = float(np.max(np.abs(R_map_new - R_map)))
-            R_map = 0.6 * R_map + 0.4 * R_map_new
-            
-            if ref_delta < 1e-4:
-                break
-        
         R_map = self._project_degenerate_modes(R_map, master_mask)
 
-        # Final reconstruction (fusion) - simple uniform average
         sum_z = np.zeros(global_shape, dtype=float)
         count = np.zeros(global_shape, dtype=float)
         support = np.zeros(global_shape, dtype=bool)
@@ -266,9 +218,7 @@ class CandidateStitcher:
             
             z_corr = obs.z - model - R_map
             
-            # Éroder le masque pour exclure les bords bruités (poids -> 0)
             working_mask = self._get_eroded_mask(obs.valid_mask)
-            # Pondération cosinus lisse sur le masque érodé
             feather_weights = self._smooth_feather_weights(working_mask)
             
             cx, cy = obs.center_xy
@@ -283,12 +233,9 @@ class CandidateStitcher:
             
             if gy_e > gy_s and gx_e > gx_s:
                 local_z = z_corr[ly_s:ly_e, lx_s:lx_e]
-                # Support tracké avec le masque original
                 local_mask_orig = obs.valid_mask[ly_s:ly_e, lx_s:lx_e]
-                # Poids calculés sur masque érodé
                 local_weights = feather_weights[ly_s:ly_e, lx_s:lx_e]
                 
-                # Accumuler avec le masque original pour le support
                 sum_z[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_z[local_mask_orig] * local_weights[local_mask_orig]
                 count[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_weights[local_mask_orig]
                 support[gy_s:gy_e, gx_s:gx_e][local_mask_orig] = True
@@ -297,7 +244,6 @@ class CandidateStitcher:
         z = np.full(global_shape, np.nan, dtype=float)
         z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
         
-        # Only preserve R_map inside master_mask to avoid leaking NaNs/zeros into visualizer if needed
         R_map_final = np.full(tile_shape, np.nan, dtype=float)
         R_map_final[master_mask] = R_map[master_mask]
         
@@ -310,7 +256,6 @@ class CandidateStitcher:
         )
 
     def _get_eroded_mask(self, valid_mask: np.ndarray) -> np.ndarray:
-        """Érode le masque pour exclure les pixels de bord bruités."""
         if EDGE_EROSION_PX <= 0:
             return valid_mask.copy()
         structure = np.ones((3, 3), dtype=bool)
@@ -332,82 +277,7 @@ class CandidateStitcher:
         result[mask] = data[mask] - (A @ coeff)
         return result
 
-    def _fuse_for_calibration(self, observations, nuisances, R_map, tile_shape, global_shape):
-        sum_z = np.zeros(global_shape, dtype=float)
-        count = np.zeros(global_shape, dtype=float)
-        for i, obs in enumerate(observations):
-            yy, xx = np.indices(tile_shape, dtype=float)
-            y_norm = 2.0 * yy / max(tile_shape[0] - 1, 1) - 1.0
-            x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
-            p, tip, tilt = nuisances[i]
-            model = p + tip * y_norm + tilt * x_norm
-            z_corr = obs.z - model - R_map
-            working_mask = self._get_eroded_mask(obs.valid_mask)
-            feather_weights = self._smooth_feather_weights(working_mask)
-            cx, cy = obs.center_xy
-            top = int(round(cy - (tile_shape[0] - 1) / 2.0))
-            left = int(round(cx - (tile_shape[1] - 1) / 2.0))
-            gy_s, gy_e = max(0, top), min(global_shape[0], top + tile_shape[0])
-            gx_s, gx_e = max(0, left), min(global_shape[1], left + tile_shape[1])
-            ly_s, lx_s = max(0, -top), max(0, -left)
-            ly_e, lx_e = ly_s + (gy_e - gy_s), lx_s + (gx_e - gx_s)
-            if gy_e > gy_s and gx_e > gx_s:
-                local_z = z_corr[ly_s:ly_e, lx_s:lx_e]
-                local_mask_orig = obs.valid_mask[ly_s:ly_e, lx_s:lx_e]
-                local_weights = feather_weights[ly_s:ly_e, lx_s:lx_e]
-                sum_z[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_z[local_mask_orig] * local_weights[local_mask_orig]
-                count[gy_s:gy_e, gx_s:gx_e][local_mask_orig] += local_weights[local_mask_orig]
-        valid_mask = count > 0
-        fused_z = np.full(global_shape, np.nan, dtype=float)
-        fused_z[valid_mask] = sum_z[valid_mask] / count[valid_mask]
-        return fused_z, valid_mask
-
-    def _estimate_reference_map(self, observations, fused_z, fused_mask, nuisances, tile_shape, master_mask):
-        sum_r = np.zeros(tile_shape, dtype=float)
-        sum_w = np.zeros(tile_shape, dtype=float)
-        for i, obs in enumerate(observations):
-            rows, cols = tile_shape
-            yy_full, xx_full = np.indices(tile_shape, dtype=float)
-            y_norm_full = 2.0 * yy_full / max(rows - 1, 1) - 1.0
-            x_norm_full = 2.0 * xx_full / max(cols - 1, 1) - 1.0
-            p, tip, tilt = nuisances[i]
-            model = p + tip * y_norm_full + tilt * x_norm_full
-            top = int(round(obs.center_xy[1] - (rows - 1) / 2.0))
-            left = int(round(obs.center_xy[0] - (cols - 1) / 2.0))
-            yy, xx = np.where(obs.valid_mask)
-            if yy.size == 0:
-                continue
-            gy, gx = yy + top, xx + left
-            valid_global = (
-                (gy >= 0) & (gy < fused_z.shape[0]) &
-                (gx >= 0) & (gx < fused_z.shape[1]) &
-                fused_mask[gy, gx]
-            )
-            if not np.any(valid_global):
-                continue
-            yy, xx, gy, gx = yy[valid_global], xx[valid_global], gy[valid_global], gx[valid_global]
-            residual = obs.z[yy, xx] - model[yy, xx] - fused_z[gy, gx]
-            all_residuals = residual
-            median = float(np.median(all_residuals))
-            mad = float(np.median(np.abs(all_residuals - median)))
-            sigma = mad / 0.6745 if mad > 1e-12 else max(float(np.std(all_residuals)), 1e-6)
-            c = max(4.685 * sigma, 1e-6)
-            u = (residual - median) / c
-            weights = np.zeros_like(u, dtype=float)
-            inside = np.abs(u) < 1.0
-            weights[inside] = (1.0 - u[inside] ** 2) ** 2
-            sum_r[yy, xx] += weights * residual
-            sum_w[yy, xx] += weights
-        reference_map = np.zeros(tile_shape, dtype=float)
-        valid = sum_w > 0
-        reference_map[valid] = sum_r[valid] / sum_w[valid]
-        ref_filled = np.where(master_mask, reference_map, 0.0)
-        ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=0.9)
-        reference_map[valid] = ref_smoothed[valid]
-        return reference_map
-
-    def _smooth_feather_weights(self, valid_mask: np.ndarray, feather_width: float = FEATHER_WIDTH) -> np.ndarray:
-        """Pondération cosinus avec dérivée nulle aux transitions."""
+    def _smooth_feather_weights(self, valid_mask: np.ndarray) -> np.ndarray:
         weights = np.zeros(valid_mask.shape, dtype=float)
         if not np.any(valid_mask):
             return weights
@@ -418,15 +288,13 @@ class CandidateStitcher:
             weights[valid_mask] = 1.0
             return weights
         
-        feather_dist = feather_width * max_dist
+        feather_dist = FEATHER_WIDTH * max_dist
         
-        # Zone de transition: cosinus
         in_feather = valid_mask & (dist <= feather_dist)
         if np.any(in_feather):
             d_norm = dist[in_feather] / max(feather_dist, 1.0)
             weights[in_feather] = 0.5 * (1.0 - np.cos(np.pi * d_norm))
         
-        # Plateau central
         plateau = valid_mask & (dist > feather_dist)
         weights[plateau] = 1.0
         
