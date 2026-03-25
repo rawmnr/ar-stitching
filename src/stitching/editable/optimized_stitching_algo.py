@@ -98,7 +98,6 @@ class CandidateStitcher:
         rows_a, cols_a, data_a, b = [], [], [], []
         row_weights = []
         row_count = 0
-        pixel_idx = 0
         
         for s, e in zip(boundaries[:-1], boundaries[1:]):
             n_overlap = e - s
@@ -145,45 +144,6 @@ class CandidateStitcher:
                 
                 b.append(ref_z - oth_z)
                 row_count += 1
-                continue
-            
-            # Inverse overlap count weighting: sparse overlaps get higher weight
-            inv_overlap_w = 1.0 / max(n_overlap - 1, 1)
-            
-            for j in range(s, e - 1):
-                ref_o = obs_idx[j]
-                ref_z = z_vals[j]
-                ref_xn = xn_vals[j]
-                ref_yn = yn_vals[j]
-                ref_r = r_idx_vals[j]
-                
-                oth_o = obs_idx[j+1]
-                oth_z = z_vals[j+1]
-                oth_xn = xn_vals[j+1]
-                oth_yn = yn_vals[j+1]
-                oth_r = r_idx_vals[j+1]
-                # Combine geometric mean of feather weights with inverse overlap count
-                row_weights.append(np.sqrt(solve_w_vals[j] * solve_w_vals[j + 1]) * inv_overlap_w)
-                
-                rows_a.extend([row_count] * 3)
-                cols_a.extend([ref_o * n_params + k for k in range(3)])
-                data_a.extend([1.0, ref_yn, ref_xn])
-                
-                rows_a.append(row_count)
-                cols_a.append(n_obs * n_params + ref_r)
-                data_a.append(1.0)
-                
-                rows_a.extend([row_count] * 3)
-                cols_a.extend([oth_o * n_params + k for k in range(3)])
-                data_a.extend([-1.0, -oth_yn, -oth_xn])
-                
-                rows_a.append(row_count)
-                cols_a.append(n_obs * n_params + oth_r)
-                data_a.append(-1.0)
-                
-                b.append(ref_z - oth_z)
-                row_count += 1
-            pixel_idx += 1
 
         A = sp.csr_matrix((data_a, (rows_a, cols_a)), shape=(row_count, n_obs * n_params + n_R_pixels))
         b_np = np.array(b)
