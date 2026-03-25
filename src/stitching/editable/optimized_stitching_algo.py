@@ -236,7 +236,7 @@ class CandidateStitcher:
             R_map_new = self._estimate_reference_map(observations, fused_z, fused_mask, nuisances, tile_shape, master_mask)
             
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
-            R_map = 0.70 * R_map + 0.30 * R_map_new
+            R_map = 0.60 * R_map + 0.40 * R_map_new
             
             # Refine nuisances every iteration using current calibration
             nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
