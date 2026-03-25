@@ -13,6 +13,41 @@ That evaluator should be based on `src/stitching/harness/evaluator.py`,
 evaluate exactly one candidate file on exactly one scenario, and print a small
 parseable metric block. Once the loop starts, that evaluator is read-only.
 
+## Current Situation
+
+The current best accepted basin is:
+
+- `aggregate_rms ~= 0.974`
+- Zernike residual above mode 36 `~= 0.845`
+- `scenario_hf_retention = 0.000`
+- low-order residual budget `~= 0.49`
+
+Interpretation:
+
+- low-order performance is already comparatively well optimized;
+- roughly 87% of the remaining RMS budget is now high-frequency residual;
+- exact-zero HF retention means the current failure is not well described as
+  "slightly too much final smoothing";
+- the remaining error is more likely driven by under-modeled detector-frame
+  calibration structure or structured misregistration that the current solver
+  cannot represent cleanly.
+
+Established negative results for the current code line:
+
+- final-surface HF split fusion regressed by about `0.13-0.17` nm;
+- normalized convolution for calibration smoothing regressed;
+- naive 6-parameter nuisance expansion caused gauge blowup (`~12.55` nm);
+- per-step detector mode projection regressed to roughly `1.09` nm;
+- reducing calibration smoothing in the earlier shallow-SIAC regime regressed;
+- median-filter calibration refinement regressed.
+
+Working conclusion:
+
+- the HF residual is likely upstream of the final fusion rule;
+- the detector-fixed calibration map is still the most plausible missing model;
+- once deep SIAC (`n_siac=96`) started converging, the old shallow-regime
+  sigma conclusions stopped being decisive.
+
 ## Setup
 
 To set up a new experiment:
@@ -480,7 +515,8 @@ approaches plateau:
 
 After 10+ iterations with diminishing returns, pivot to one of:
 - Richer overlap clique construction (global graph vs. pairwise)
-- Adaptive calibration smoothing sigma (search 0.3–1.5 range)
+- Adaptive calibration smoothing sigma, preferably coarse-to-fine schedules
+  rather than fixed small sigma from iteration 1
 - Two-stage robust loss schedule (Huber init → Tukey refinement)
 - Improved detector-mode projection (which modes to remove, in what order)
 - Fusion weighting redesign (coherence-based, distance-based, or hybrid)
@@ -492,12 +528,43 @@ The target file exposes or hardcodes these tunable levers:
 - `EDGE_EROSION_PX = 2` — aggressive border exclusion of noisy pixels.
 - `FEATHER_WIDTH = 0.20` — cosine cross-fade width at overlap borders.
 - `lambda_reg = 1e-6` — Tikhonov stabilization of the simultaneous solve.
-- `sigma_filter = 0.7` — low-pass smoothing of the detector calibration map.
+- `sigma_filter` — low-pass smoothing of the detector calibration map.
 - `n_params = 3` — nuisance basis (piston, tip, tilt; 4th slot unused).
 - IRLS iteration count = 5 — number of robust reweighting passes.
 - Huber scale = `1.345 * sigma` — robustness threshold.
 - Overlap assembly pattern — currently pairwise-local, not global clique.
 - Calibration gauge constraints — piston, tip, tilt, defocus, astigmatism.
+
+### Immediate priority
+
+Do not spend the next cycle retrying end-stage HF injection tricks. The current
+evidence says the remaining HF residual is not mainly caused by the final
+fusion blend.
+
+The next experiments should test whether the residual comes from detector-map
+structure that a fixed-sigma SIAC loop cannot capture cleanly.
+
+Ordered next experiments:
+
+1. Keep deep SIAC (`n_siac=96`) and test a smaller fixed calibration smoother
+   such as `sigma_filter=1.0`.
+2. If that regresses, implement annealed calibration smoothing inside the SIAC
+   loop, for example geometric decay from `2.5` to `0.8` across the full
+   alternation schedule.
+3. If annealing helps, sweep the terminal sigma over a compact range such as
+   `{0.5, 0.7, 1.0, 1.3}`.
+4. Only after the calibration path is stabilized, revisit richer nuisance terms
+   with explicit shrinkage on the added quadratic modes.
+5. Treat phase-correlation or other sub-pixel pose refinement as a later
+   fallback, not the first response to the current HF plateau.
+
+Evaluation rule for this phase:
+
+- prefer runs that reduce both `aggregate_rms` and the high-order residual;
+- if total RMS improves but `scenario_hf_retention` stays pinned at `0.0` and
+  the high-order residual does not move, treat that as low-order cleanup rather
+  than a real HF breakthrough;
+- prioritize structural calibration changes over cosmetic fusion changes.
 
 ### Curriculum phases
 
@@ -506,15 +573,18 @@ or 4 without establishing that Phases 1 and 2 have plateaued.
 
 **Phase 1 — Foundation and sensitivity scan (~20% of budget)**
 Establish a solid, stable baseline and characterize sensitivity to the
-primary numeric levers.
+primary numeric levers. This phase has effectively already established the
+current basin: deep SIAC plus stronger calibration smoothing than the shallow
+regime originally suggested.
 
 - Run the unmodified baseline to get the initial `aggregate_rms`.
 - Sweep `EDGE_EROSION_PX` in {1, 2, 3, 4} — edge exclusion has outsized
   impact when phase singularities are present.
 - Sweep `FEATHER_WIDTH` in {0.10, 0.20, 0.30} — too much feather degrades
   resolution; too little permits border artifacts.
-- Sweep `sigma_filter` in {0.3, 0.5, 0.7, 1.0, 1.5} — capture the
-  under-smoothing and over-smoothing regimes for calibration.
+- Treat the old shallow-SIAC `sigma_filter` sweep as historical context only.
+  Re-check calibration smoothing under deep SIAC rather than assuming the old
+  optimum still applies.
 - Sweep `lambda_reg` in {1e-7, 1e-6, 1e-5} — too much regularization
   biases the solve; too little permits ill-conditioning.
 - Record which lever moves `aggregate_rms` most. Lock the rest and
@@ -535,9 +605,10 @@ With Phase 1 winners fixed, tackle the structural algorithm components.
   (e.g., keep piston+tip+tilt; test adding defocus or astigmatism to the
   projection set). Test whether projecting out 4 modes vs. 5 modes changes
   the RMS meaningfully.
-- **Calibration smoothing adaptivity** — Instead of fixed `sigma_filter`,
-  try spatially adaptive smoothing: stronger smoothing near edges, weaker
-  near overlap centers where signal is strongest.
+- **Calibration smoothing adaptivity** — This is now the top Phase 2 item.
+  Prefer coarse-to-fine smoothing within the SIAC loop over purely spatial
+  adaptivity. Start broad for stability, then narrow once the alternation has
+  substantially converged.
 
 **Phase 3 — Combination and interaction testing (~30% of budget)**
 Stack the best configurations from Phase 2. Watch for regressions caused by
