@@ -17,6 +17,8 @@ n_irls = 1
 n_siac = 96
 POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
 HF_SPLIT_SIGMA = 0
+NUISANCE_DIM = 6
+NUISANCE_REG_LAMBDA = 20.0
 
 class CandidateStitcher:
     def reconstruct(
@@ -220,7 +222,8 @@ class CandidateStitcher:
                 break
             x = x_new
         
-        nuisances = x[:n_obs * n_params].reshape((n_obs, n_params))
+        nuisances = np.zeros((n_obs, NUISANCE_DIM), dtype=float)
+        nuisances[:, :n_params] = x[:n_obs * n_params].reshape((n_obs, n_params))
         R_vals = x[n_obs * n_params:]
         
         R_map = np.zeros(tile_shape, dtype=float)
@@ -269,8 +272,7 @@ class CandidateStitcher:
             y_norm = 2.0 * yy / max(tile_shape[0] - 1, 1) - 1.0
             x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
             
-            p, tip, tilt = nuisances[i]
-            model = p + tip * y_norm + tilt * x_norm
+            model = self._nuisance_model(nuisances[i], y_norm, x_norm)
             
             z_corr = obs.z - model - R_map
             if pose_shifts is not None:
@@ -350,6 +352,23 @@ class CandidateStitcher:
         result[mask] = data[mask] - (A @ coeff)
         return result
 
+    def _nuisance_model(
+        self,
+        coeffs: np.ndarray,
+        y_norm: np.ndarray,
+        x_norm: np.ndarray,
+    ) -> np.ndarray:
+        padded = np.zeros(NUISANCE_DIM, dtype=float)
+        padded[: min(len(coeffs), NUISANCE_DIM)] = coeffs[:NUISANCE_DIM]
+        return (
+            padded[0]
+            + padded[1] * y_norm
+            + padded[2] * x_norm
+            + padded[3] * (x_norm**2 + y_norm**2)
+            + padded[4] * (x_norm**2 - y_norm**2)
+            + padded[5] * (2.0 * x_norm * y_norm)
+        )
+
     def _fuse_for_calibration(self, observations, nuisances, R_map, tile_shape, global_shape, pose_shifts=None):
         sum_z = np.zeros(global_shape, dtype=float)
         count = np.zeros(global_shape, dtype=float)
@@ -357,8 +376,7 @@ class CandidateStitcher:
             yy, xx = np.indices(tile_shape, dtype=float)
             y_norm = 2.0 * yy / max(tile_shape[0] - 1, 1) - 1.0
             x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
-            p, tip, tilt = nuisances[i]
-            model = p + tip * y_norm + tilt * x_norm
+            model = self._nuisance_model(nuisances[i], y_norm, x_norm)
             z_corr = obs.z - model - R_map
             if pose_shifts is not None:
                 z_corr = self._apply_pose_shift(z_corr, pose_shifts[i])
@@ -416,18 +434,37 @@ class CandidateStitcher:
             A_nuis = np.column_stack([
                 np.ones(len(yy), dtype=float),
                 y_norm_full[yy, xx],
-                x_norm_full[yy, xx]
+                x_norm_full[yy, xx],
+                x_norm_full[yy, xx] ** 2 + y_norm_full[yy, xx] ** 2,
+                x_norm_full[yy, xx] ** 2 - y_norm_full[yy, xx] ** 2,
+                2.0 * x_norm_full[yy, xx] * y_norm_full[yy, xx],
             ])
-            
-            # Simple least squares fit
-            coeff, *_ = np.linalg.lstsq(A_nuis, target, rcond=None)
-            
-            # Full replacement - no damping
+
+            A_reg = np.zeros((3, NUISANCE_DIM), dtype=float)
+            A_reg[0, 3] = NUISANCE_REG_LAMBDA
+            A_reg[1, 4] = NUISANCE_REG_LAMBDA
+            A_reg[2, 5] = NUISANCE_REG_LAMBDA
+            b_reg = np.zeros(3, dtype=float)
+
+            coeff, *_ = np.linalg.lstsq(
+                np.vstack([A_nuis, A_reg]),
+                np.concatenate([target, b_reg]),
+                rcond=None,
+            )
+
             new_nuisances[i] = coeff
         
         return new_nuisances
 
-    def _estimate_reference_map(self, observations, fused_z, fused_mask, nuisances, tile_shape, master_mask):
+    def _estimate_reference_map(
+        self,
+        observations,
+        fused_z,
+        fused_mask,
+        nuisances,
+        tile_shape,
+        master_mask,
+    ):
         sum_r = np.zeros(tile_shape, dtype=float)
         sum_w = np.zeros(tile_shape, dtype=float)
         for i, obs in enumerate(observations):
@@ -435,8 +472,7 @@ class CandidateStitcher:
             yy_full, xx_full = np.indices(tile_shape, dtype=float)
             y_norm_full = 2.0 * yy_full / max(rows - 1, 1) - 1.0
             x_norm_full = 2.0 * xx_full / max(cols - 1, 1) - 1.0
-            p, tip, tilt = nuisances[i]
-            model = p + tip * y_norm_full + tilt * x_norm_full
+            model = self._nuisance_model(nuisances[i], y_norm_full, x_norm_full)
             top = int(round(obs.center_xy[1] - (rows - 1) / 2.0))
             left = int(round(obs.center_xy[0] - (cols - 1) / 2.0))
             yy, xx = np.where(obs.valid_mask)
@@ -492,15 +528,19 @@ class CandidateStitcher:
         
         return weights
 
-    def _low_frequency_calibration_map(self, data: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    def _low_frequency_calibration_map(
+        self,
+        data: np.ndarray,
+        mask: np.ndarray,
+    ) -> np.ndarray:
         if not np.any(mask):
             return np.zeros_like(data, dtype=float)
 
         block = int(CALIBRATION_BLOCK)
         if block <= 1:
+            result = np.zeros_like(data, dtype=float)
             ref_filled = np.where(mask, data, 0.0)
             ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
-            result = np.zeros_like(data, dtype=float)
             result[mask] = ref_smoothed[mask]
             return result
 
@@ -543,8 +583,7 @@ class CandidateStitcher:
         x_norm = 2.0 * xx / max(tile_shape[1] - 1, 1) - 1.0
 
         for i, obs in enumerate(observations):
-            p, tip, tilt = nuisances[i]
-            model = p + tip * y_norm + tilt * x_norm
+            model = self._nuisance_model(nuisances[i], y_norm, x_norm)
             z_corr = obs.z - model - R_map
             working_mask = self._get_eroded_mask(obs.valid_mask)
 
