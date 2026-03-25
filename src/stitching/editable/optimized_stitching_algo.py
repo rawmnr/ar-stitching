@@ -479,12 +479,42 @@ class CandidateStitcher:
         if not np.any(mask):
             return np.zeros_like(data, dtype=float)
 
-        ref_filled = np.where(mask, data, 0.0)
-        ref_median = ndimage.median_filter(ref_filled, size=MEDIAN_FILTER_SIZE)
-        ref_smoothed = ndimage.gaussian_filter(ref_median, sigma=sigma_filter)
-        result = np.zeros_like(data, dtype=float)
-        result[mask] = ref_smoothed[mask]
-        return result
+        block = int(CALIBRATION_BLOCK)
+        if block <= 1:
+            ref_filled = np.where(mask, data, 0.0)
+            ref_smoothed = ndimage.gaussian_filter(ref_filled, sigma=sigma_filter)
+            result = np.zeros_like(data, dtype=float)
+            result[mask] = ref_smoothed[mask]
+            return result
+
+        h, w = data.shape
+        pad_h = (-h) % block
+        pad_w = (-w) % block
+        if pad_h or pad_w:
+            padded_data = np.pad(data, ((0, pad_h), (0, pad_w)), mode="constant")
+            padded_mask = np.pad(mask, ((0, pad_h), (0, pad_w)), mode="constant")
+        else:
+            padded_data = data
+            padded_mask = mask
+
+        ph, pw = padded_data.shape
+        coarse_h = ph // block
+        coarse_w = pw // block
+        reshaped_data = padded_data.reshape(coarse_h, block, coarse_w, block)
+        reshaped_mask = padded_mask.reshape(coarse_h, block, coarse_w, block)
+        sum_blocks = np.sum(reshaped_data * reshaped_mask, axis=(1, 3))
+        count_blocks = np.sum(reshaped_mask, axis=(1, 3))
+
+        coarse = np.zeros((coarse_h, coarse_w), dtype=float)
+        valid = count_blocks > 0
+        coarse[valid] = sum_blocks[valid] / count_blocks[valid]
+        if np.any(valid):
+            coarse = ndimage.gaussian_filter(coarse, sigma=CALIBRATION_SMOOTH_SIGMA)
+
+        upsampled = np.repeat(np.repeat(coarse, block, axis=0), block, axis=1)
+        result = np.zeros_like(padded_data, dtype=float)
+        result[:, :] = upsampled
+        return result[:h, :w]
 
     def _estimate_pose_shifts(self, observations, nuisances, R_map, fused_z, fused_mask, tile_shape, global_shape):
         shifts = np.zeros((len(observations), 2), dtype=float)
