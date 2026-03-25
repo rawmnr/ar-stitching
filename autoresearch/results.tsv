@@ -85,5 +85,5 @@ work-20260325-v	0.99000611	14.09	discard	regularized 6-term nuisance refinement 
 work-20260325-w	0.95551926	14.03	keep	regularized 6-term nuisance refinement with lambda=30 improved total RMS over the old basin
 work-20260325-x	0.97028154	12.99	discard	regularized 6-term nuisance refinement with lambda=100 over-shrank toward the 3-term model
 work-20260325-y	0.96262331	14.03	discard	regularized 6-term nuisance refinement with lambda=50 improved over baseline but worse than lambda=30
-work-20260325-z	0.95289226	12.05	keep	regularized 6-term nuisance refinement with lambda=20 is the new best candidate
+9f035ea	0.95289226	12.05	keep	regularized 6-term nuisance refinement with lambda=20 is the new best candidate
 work-20260325-aa	0.95337742	21.56	discard	regularized 6-term nuisance refinement with lambda=18 traded slightly better HF residual for worse RMS and runtime
