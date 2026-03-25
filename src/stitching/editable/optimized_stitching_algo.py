@@ -13,12 +13,20 @@ SOLVE_FEATHER_WIDTH = 0.51
 sigma_filter = 1.55
 CALIBRATION_BLOCK = 1
 CALIBRATION_SMOOTH_SIGMA = 0.75
-CALIBRATION_MF_ALPHA = 0.35
+CALIBRATION_MF_ALPHA = 0.38
 CALIBRATION_MF_MIN_OBS = 8
 CALIBRATION_MF_GATE_SIGMA = 0.5
 CALIBRATION_BP_SIGMA = 0.5
+CALIBRATION_MF_LO_SIGMA = 1.55
+CALIBRATION_MF_COUNT_RAMP = 1.0
+CALIBRATION_MF_CONSENSUS_GAIN = 3.5
+CALIBRATION_MF_USE_CONSENSUS = False
+CALIBRATION_MF_SUPPORT_AWARE_BP = False
+CALIBRATION_MF_DETREND_LOWORDER = False
+CALIBRATION_LF_UPDATE_BLEND = 0.40
+CALIBRATION_MF_UPDATE_BLEND = 0.10
 n_irls = 1
-n_siac = 149
+n_siac = 135
 POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
 HF_SPLIT_SIGMA = 0
 NUISANCE_DIM = 6
@@ -234,7 +242,9 @@ class CandidateStitcher:
         R_map = np.zeros(tile_shape, dtype=float)
         R_map[master_mask] = R_vals
         
-        R_map = self._low_frequency_calibration_map(R_map, master_mask)
+        R_lf = self._low_frequency_calibration_map(R_map, master_mask)
+        R_mf = np.zeros_like(R_lf)
+        R_map = R_lf + CALIBRATION_MF_ALPHA * R_mf
         pose_shifts = None
         
         for siac_iter in range(n_siac):
@@ -242,17 +252,20 @@ class CandidateStitcher:
             if not np.any(fused_mask):
                 break
             
-            R_map_new = self._estimate_reference_map(
+            R_lf_new, R_mf_new, mf_gate = self._estimate_reference_components(
                 observations,
                 fused_z,
                 fused_mask,
                 nuisances,
                 tile_shape,
                 master_mask,
-                mf_alpha=CALIBRATION_MF_ALPHA,
             )
+            R_lf = (1.0 - CALIBRATION_LF_UPDATE_BLEND) * R_lf + CALIBRATION_LF_UPDATE_BLEND * R_lf_new
+            gated_mf_new = mf_gate * R_mf_new
+            R_mf = (1.0 - CALIBRATION_MF_UPDATE_BLEND) * R_mf + CALIBRATION_MF_UPDATE_BLEND * gated_mf_new
+            R_map_new = R_lf + CALIBRATION_MF_ALPHA * R_mf
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
-            R_map = 0.60 * R_map + 0.40 * R_map_new
+            R_map = R_map_new
             
             # Refine nuisances every iteration using current calibration
             nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
@@ -473,7 +486,7 @@ class CandidateStitcher:
         
         return new_nuisances
 
-    def _estimate_reference_map(
+    def _estimate_reference_components(
         self,
         observations,
         fused_z,
@@ -481,12 +494,12 @@ class CandidateStitcher:
         nuisances,
         tile_shape,
         master_mask,
-        mf_alpha: float,
     ):
         sum_r = np.zeros(tile_shape, dtype=float)
         sum_w = np.zeros(tile_shape, dtype=float)
         sum_mf = np.zeros(tile_shape, dtype=float)
         sum_mf_w = np.zeros(tile_shape, dtype=float)
+        sum_mf_sq = np.zeros(tile_shape, dtype=float)
         n_contributing = np.zeros(tile_shape, dtype=float)
         for i, obs in enumerate(observations):
             rows, cols = tile_shape
@@ -522,13 +535,36 @@ class CandidateStitcher:
             sum_w[yy, xx] += weights
             n_contributing[yy, xx] += (weights > 0.0).astype(float)
 
+            mf_residual = residual
+            if CALIBRATION_MF_DETREND_LOWORDER:
+                mf_residual = self._remove_detector_low_order(
+                    mf_residual,
+                    yy,
+                    xx,
+                    tile_shape,
+                )
             residual_image = np.zeros(tile_shape, dtype=float)
-            residual_image[yy, xx] = residual
-            mf_hi = ndimage.gaussian_filter(residual_image, sigma=CALIBRATION_BP_SIGMA)
-            mf_lo = ndimage.gaussian_filter(residual_image, sigma=sigma_filter)
+            residual_image[yy, xx] = mf_residual
+            local_mask = np.zeros(tile_shape, dtype=bool)
+            local_mask[yy, xx] = True
+            if CALIBRATION_MF_SUPPORT_AWARE_BP:
+                mf_hi = self._masked_gaussian_filter(
+                    residual_image,
+                    local_mask,
+                    sigma=CALIBRATION_BP_SIGMA,
+                )
+                mf_lo = self._masked_gaussian_filter(
+                    residual_image,
+                    local_mask,
+                    sigma=CALIBRATION_MF_LO_SIGMA,
+                )
+            else:
+                mf_hi = ndimage.gaussian_filter(residual_image, sigma=CALIBRATION_BP_SIGMA)
+                mf_lo = ndimage.gaussian_filter(residual_image, sigma=CALIBRATION_MF_LO_SIGMA)
             mf_image = mf_hi - mf_lo
             sum_mf[yy, xx] += weights * mf_image[yy, xx]
             sum_mf_w[yy, xx] += weights
+            sum_mf_sq[yy, xx] += weights * mf_image[yy, xx] ** 2
 
         reference_raw = np.zeros(tile_shape, dtype=float)
         valid = sum_w > 0
@@ -540,18 +576,37 @@ class CandidateStitcher:
         reference_mf[mf_valid] = sum_mf[mf_valid] / sum_mf_w[mf_valid]
         reference_mf = self._project_degenerate_modes(reference_mf, valid)
 
-        gate = np.zeros(tile_shape, dtype=float)
-        gate[n_contributing >= CALIBRATION_MF_MIN_OBS] = 1.0
+        count_gate = np.clip(
+            (n_contributing - (CALIBRATION_MF_MIN_OBS - 1.0)) / max(CALIBRATION_MF_COUNT_RAMP, 1e-6),
+            0.0,
+            1.0,
+        )
+        gate = count_gate
+        if CALIBRATION_MF_USE_CONSENSUS and np.any(mf_valid):
+            mf_var = np.zeros_like(reference_raw)
+            mf_var[mf_valid] = np.maximum(
+                sum_mf_sq[mf_valid] / np.maximum(sum_mf_w[mf_valid], 1e-12)
+                - reference_mf[mf_valid] ** 2,
+                0.0,
+            )
+            mf_spread = np.sqrt(mf_var)
+            scale_mask = mf_valid & (n_contributing >= CALIBRATION_MF_MIN_OBS)
+            if np.any(scale_mask):
+                spread_scale = float(np.median(mf_spread[scale_mask]))
+            else:
+                spread_scale = float(np.median(mf_spread[mf_valid]))
+            spread_scale = max(spread_scale * CALIBRATION_MF_CONSENSUS_GAIN, 1e-6)
+            consensus_gate = np.zeros_like(reference_raw)
+            consensus_gate[mf_valid] = 1.0 / (1.0 + (mf_spread[mf_valid] / spread_scale) ** 2)
+            gate *= consensus_gate
 
         gate = ndimage.gaussian_filter(gate, sigma=CALIBRATION_MF_GATE_SIGMA)
         gate = np.clip(gate, 0.0, 1.0)
 
-        reference_map = np.zeros(tile_shape, dtype=float)
-        reference_map[valid] = (
-            reference_lf[valid]
-            + mf_alpha * gate[valid] * reference_mf[valid]
-        )
-        return reference_map
+        gated_reference_mf = np.zeros(tile_shape, dtype=float)
+        gated_reference_mf[valid] = reference_mf[valid]
+        gate[~valid] = 0.0
+        return reference_lf, gated_reference_mf, gate
 
     def _smooth_feather_weights(self, valid_mask: np.ndarray, feather_width: float = FEATHER_WIDTH) -> np.ndarray:
         weights = np.zeros(valid_mask.shape, dtype=float)
@@ -575,6 +630,44 @@ class CandidateStitcher:
         weights[plateau] = 1.0
         
         return weights
+
+    def _remove_detector_low_order(
+        self,
+        values: np.ndarray,
+        yy: np.ndarray,
+        xx: np.ndarray,
+        tile_shape: tuple[int, int],
+    ) -> np.ndarray:
+        if values.size == 0:
+            return values
+        rows, cols = tile_shape
+        y_norm = 2.0 * yy / max(rows - 1, 1) - 1.0
+        x_norm = 2.0 * xx / max(cols - 1, 1) - 1.0
+        design = np.column_stack([
+            np.ones(values.size, dtype=float),
+            y_norm,
+            x_norm,
+            x_norm**2 + y_norm**2,
+            x_norm**2 - y_norm**2,
+            2.0 * x_norm * y_norm,
+        ])
+        coeff, *_ = np.linalg.lstsq(design, values, rcond=None)
+        return values - design @ coeff
+
+    def _masked_gaussian_filter(
+        self,
+        data: np.ndarray,
+        mask: np.ndarray,
+        sigma: float,
+    ) -> np.ndarray:
+        if sigma <= 0 or not np.any(mask):
+            return np.where(mask, data, 0.0)
+        weighted = ndimage.gaussian_filter(np.where(mask, data, 0.0), sigma=sigma)
+        norm = ndimage.gaussian_filter(mask.astype(float), sigma=sigma)
+        result = np.zeros_like(data, dtype=float)
+        valid = norm > 1e-6
+        result[valid] = weighted[valid] / norm[valid]
+        return result
 
     def _low_frequency_calibration_map(
         self,

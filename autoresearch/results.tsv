@@ -87,3 +87,14 @@ work-20260325-x	0.97028154	12.99	discard	regularized 6-term nuisance refinement 
 work-20260325-y	0.96262331	14.03	discard	regularized 6-term nuisance refinement with lambda=50 improved over baseline but worse than lambda=30
 9f035ea	0.95289226	12.05	keep	regularized 6-term nuisance refinement with lambda=20 is the new best candidate
 work-20260325-aa	0.95337742	21.56	discard	regularized 6-term nuisance refinement with lambda=18 traded slightly better HF residual for worse RMS and runtime
+20260325-live-baseline	0.92055912	40.56	discard	live baseline before new calibration sweeps; best then-current RMS but over 30s runtime
+20260325-mf-gate-strict	0.92215859	30.48	discard	adaptive MF count times consensus gate was too suppressive and exceeded runtime target
+20260325-mf-gate-loose	0.92078400	29.67	discard	looser consensus gate was nearly neutral but still worse than the live baseline
+20260325-mf-support-aware	0.92175507	31.83	discard	support-aware MF band-pass via masked gaussian regressed and missed runtime target
+20260325-mf-detrend	0.92199783	28.77	discard	MF-only detector low-order detrending before band-pass regressed
+20260325-mf-band-split	0.92095566	29.00	discard	separate MF low cutoff without consensus still regressed
+20260325-mf-state-split-b20	0.92054138	32.16	discard	separate LF and MF SIAC states with MF blend 0.20 improved RMS but exceeded runtime target
+20260325-mf-state-split-a38	0.92053615	32.48	discard	separate LF and MF states plus mf_alpha 0.38 improved RMS but exceeded runtime target
+20260325-mf-state-split-b15	0.92052380	38.00	discard	separate LF and MF states plus MF blend 0.15 improved RMS but exceeded runtime target
+20260325-mf-state-split-b10	0.92050570	29.51	keep	separate LF and MF states plus mf_alpha 0.38 and MF blend 0.10 is the current best under 30s
+20260325-mf-state-split-b08	0.92049561	49.99	discard	separate LF and MF states plus MF blend 0.08 improved RMS slightly but blew past the 30s runtime cap
