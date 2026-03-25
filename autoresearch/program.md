@@ -324,111 +324,230 @@ baselines, combine near-miss ideas, or try a different algorithmic layer.
 Read the local docs and baselines as design priors, then optimize for the
 trusted metric, not for visual smoothness.
 
-High-value directions:
-- Better separation of detector-fixed calibration from object surface content.
-- More robust overlap equations and weighting under ripple, edge roll-off, and
-  sparse outliers.
-- Safer gauge handling so nuisance terms and calibration modes do not leak into
-  one another.
-- Edge-aware fusion that suppresses border corruption without erasing real
-  structure.
-- Very tightly bounded pose refinement only if it clearly helps and preserves
-  evaluator guardrails.
+### Perturbation model
 
-From the docs, prefer:
-- Huber-style IRLS for stable initial solves.
-- A Tukey or redescending stage only after the initialization is already stable.
-- Detector-frame calibration estimation with robust aggregation.
-- Removal of detector low-order modes to limit crosstalk with nuisance terms.
-- Explicit damping in alternating updates.
-- Spatial cross-fade weights near overlap borders.
-- Small, testable changes before ambitious rewrites.
+The S17 scenario is not a single error source—it is a superposition of four
+distinct, entangled disruption vectors:
 
-Common pitfalls in this repo:
-- Estimating a detector map but forgetting to remove low-order gauge modes.
-- Over-smoothing the calibration map and losing real detector structure.
-- Using aggressive pose resampling that changes `observed_support_mask`.
+| Vector | Physical origin | Mitigation principle |
+|--------|-----------------|----------------------|
+| High-frequency noise / phase singularities | Optical propagation, detector noise | Robust M-estimators; do not let 2π jumps dominate the solve |
+| Rigid-body positioning errors | Multi-axis kinematic stage tolerances | Global pose-graph solve; do not chain sequential pairwise alignment |
+| Systematic reference error | Transmission sphere aberrations | Alternating or simultaneous calibration; remove low-order gauge modes |
+| Time-dependent surface drift | Thermal expansion, mechanical lever effects | Non-rigid registration or spatiotemporal parameterization |
+
+Crosstalk is the primary failure mode: piston/tip/tilt can masquerade as
+detector bias, and vice versa. Every strategy below must be evaluated for
+whether it exacerbates or mitigates this coupling.
+
+### High-value algorithmic directions
+
+1. **Overlap equation assembly and row weighting**
+   This is the biggest lever in S17 because outliers and edge corruption enter
+   here directly. Prefer global clique construction over pairwise chains.
+   Weight rows by inverse-distance or local coherence metrics.
+
+2. **Detector-fixed calibration decoupling**
+   The detector imprint is additive in detector coordinates and moves relative to
+   the surface. Use simultaneous or alternating calibration (SIAC-style),
+   aggregate residuals in detector frame, and explicitly project out low-order
+   degenerate modes (piston, tip, tilt, defocus, astigmatism) from the
+   calibration map to prevent crosstalk with nuisance terms.
+
+3. **Robust loss schedule**
+   Start with Huber initialization for stability. Introduce a Tukey or
+   redescending stage only after the linear solve is stable. Never switch
+   loss functions mid-iteration without guardrails.
+
+4. **Fusion weights and edge handling**
+   Cosine cross-fade near overlap borders. Erode noisy borders aggressively
+   enough to exclude phase singularities. Do not let border pixels dominate
+   overlap equations.
+
+5. **Pose refinement (tightly bounded)**
+   Small, physically plausible corrections to sub-aperture centers are acceptable
+   only if they clearly improve `aggregate_rms`. Prefer center-shift
+   corrections over mask-distorting resampling. Revert immediately if
+   `observed_support_mask` drifts.
+
+### Advanced strategies from the research curriculum
+
+The following are legitimate algorithmic directions; use them when simpler
+approaches plateau:
+
+- **Zernike / Q-polynomial basis** — If you model the surface or reference error
+  in a polynomial basis, prefer orthogonal bases. Zernike polynomials are
+  natural for circular apertures; Forbes Q-polynomials are better for strong
+  aspheric departure because they are orthogonal in surface gradient rather than
+  sag. For non-circular overlaps, Gram-Schmidt orthonormalization is acceptable.
+
+- **Spectral stitching** — Transform overlapping regions into the 2D Fourier
+  domain. Stitch amplitude and phase spectra directly before transforming back.
+  This preserves mid-spatial frequency manufacturing ripples that spatial-domain
+  polynomial fitting either filters out or aliases.
+
+- **Alternating calibration (SIAC / CS / SC)** — SIAC alternates between a
+  positioning-only solve (reference frozen) and a reference-only solve (poses
+  frozen). CS first calibrates then stitches; SC first stitches then calibrates.
+  All three are valid; the autoresearch loop should empirically select among
+  them based on which yields the lowest RMS on this specific scenario.
+
+- **Biconvex lifting (SparseLift)** — When alternating minimization stalls due to
+  severe non-convexity, "lift" the bilinear problem into a higher-dimensional
+  convex problem: define X := xz^T, then solve L1,2-norm minimization subject
+  to data fidelity. Recover the surface via best rank-one SVD approximation.
+  This bypasses local minima that plague standard gradient descent.
+
+- **Graph-SLAM / Bundle Adjustment** — Frame the stitching problem as a
+  pose-graph with nodes = sub-aperture poses and edges = overlap constraints.
+  Solve the entire graph simultaneously with nonlinear sparse optimization,
+  enforcing loop closures where scan rings close. Use robust M-estimators
+  (Huber, Cauchy, Tukey) inside the bundle adjustment to downweight phase
+  singularities.
+
+- **Coherent Point Drift (CPD)** — For thermal drift that violates
+  rigid-body assumptions, treat one point cloud as GMM centroids and the other
+  as data points. Maximize likelihood while forcing coherent group motion.
+  Tune the rigidity regularization to find the stiffness that fits the drift
+  without overfitting to noise.
+
+- **Spatiotemporal drift parameterization** — If timestamps are available,
+  model r(x,y,t) = r0(x,y) + c·t + d·t² and solve a maximum likelihood
+  estimation over the full spatiotemporal dataset jointly.
+
+- **Compound loss function** — The objective is not plain MSE. Optimize a
+  weighted sum:
+  L_total = L_overlap + λ1·L_smoothness + λ2·L_drift + λ3·L_sparse
+  where L_overlap uses a robust M-estimator on overlap residuals,
+  L_smoothness applies Total Variation or gradient-domain penalization,
+  L_drift penalizes high-velocity jumps in sequential pose parameters, and
+  L_sparse applies L1 or L1,2 penalization to calibration coefficients.
+
+### What to avoid
+
+- Estimating a detector map without removing low-order gauge modes.
+- Over-smoothing the calibration map until real structure is lost.
+- Aggressive pose resampling that changes `observed_support_mask`.
 - Letting edge pixels dominate overlap equations.
-- Replacing trusted metrics with visual proxies.
-- Breaking deterministic behavior with uncontrolled random search.
+- Replacing trusted RMS metrics with visual smoothness proxies.
+- Breaking deterministic behavior with uncontrolled randomness.
+- Overfitting to S17 noise rather than the true underlying surface.
 
-If you add pose correction logic:
-- keep corrections small and physically plausible;
-- prefer corrections to observation centers over mask-distorting resampling when possible;
-- never let the returned `observed_support_mask` drift away from the physical
-  support of the original observations;
-- require clear evaluator improvement before keeping pose machinery.
+### If progress stalls
 
-If you have made small tweaks for 10+ iterations with little progress, try one
-radically different but still principled direction:
-- richer overlap clique construction;
-- adaptive calibration smoothing;
-- a two-stage robust loss schedule;
-- leave-one-out or gradient-informed pose correction;
-- improved detector-mode projection;
-- fusion weighting redesign.
+After 10+ iterations with diminishing returns, pivot to one of:
+- Richer overlap clique construction (global graph vs. pairwise)
+- Adaptive calibration smoothing sigma (search 0.3–1.5 range)
+- Two-stage robust loss schedule (Huber init → Tukey refinement)
+- Improved detector-mode projection (which modes to remove, in what order)
+- Fusion weighting redesign (coherence-based, distance-based, or hybrid)
 
 ## Search strategy
 
-The target file currently exposes or hardcodes these tunable levers:
-- `EDGE_EROSION_PX = 2` - how aggressively noisy borders are excluded.
-- `FEATHER_WIDTH = 0.20` - width of cosine cross-fade in fusion.
-- `lambda_reg = 1e-6` - Tikhonov stabilization of the simultaneous solve.
-- `sigma_filter = 0.7` - low-pass smoothing of the detector calibration map.
-- `n_params = 3` - nuisance basis limited to piston, tip, tilt.
-- IRLS iteration count = 5 - number of robust reweighting passes.
-- Huber scale multiplier = `1.345 * sigma` - robustness threshold.
-- Overlap assembly pattern - currently close to local pairwise equations, not an
-  aggressively weighted global clique.
-- Calibration gauge constraints - piston, tip, tilt, defocus, astigmatism.
+The target file exposes or hardcodes these tunable levers:
 
-Search priority from most likely to matter to least:
-1. Overlap equation assembly and row weighting.
-   This is usually the biggest lever for s17 because overlap corruption,
-   outliers, and edge effects directly enter here.
-2. Detector calibration estimation and low-order mode projection.
-   The docs strongly suggest calibration separation and gauge removal are core.
-3. Robust loss schedule.
-   Huber is stable; a later Tukey stage may help if introduced carefully.
-4. Fusion weights and edge erosion.
-   Border handling matters, but it should not compensate for a weak solve.
-5. Pose refinement.
-   Potentially valuable, but only if tightly bounded and evaluator-safe.
-6. Minor numeric tolerances and iteration counts.
-   Useful only after the structural pieces are solid.
+- `EDGE_EROSION_PX = 2` — aggressive border exclusion of noisy pixels.
+- `FEATHER_WIDTH = 0.20` — cosine cross-fade width at overlap borders.
+- `lambda_reg = 1e-6` — Tikhonov stabilization of the simultaneous solve.
+- `sigma_filter = 0.7` — low-pass smoothing of the detector calibration map.
+- `n_params = 3` — nuisance basis (piston, tip, tilt; 4th slot unused).
+- IRLS iteration count = 5 — number of robust reweighting passes.
+- Huber scale = `1.345 * sigma` — robustness threshold.
+- Overlap assembly pattern — currently pairwise-local, not global clique.
+- Calibration gauge constraints — piston, tip, tilt, defocus, astigmatism.
 
-**Phase 1** (first ~20%): sensitivity scan
-- Try 2-3 values for `EDGE_EROSION_PX`, `FEATHER_WIDTH`, `sigma_filter`,
-  and `lambda_reg`.
-- Compare current overlap assembly against a stronger clique or better row
-  weighting if the change is local and readable.
-- Establish whether runtime is dominated by the solve or by extra preprocessing.
+### Curriculum phases
 
-**Phase 2** (next ~30%): focused range search on the highest-impact levers
-- If stronger edge suppression helps, test nearby values rather than only more.
-- If calibration smoothing helps, search for the smallest useful sigma.
-- If robust weighting helps, tune thresholding rather than immediately adding
-  more complexity.
+The search is organized into four ordered phases. Do not skip to Phase 3
+or 4 without establishing that Phases 1 and 2 have plateaued.
 
-**Phase 3** (next ~30%): combine winners
-- Stack the best overlap weighting, best calibration handling, and best fusion
-  weights.
-- Check interactions carefully; many combinations that look individually good
-  can reintroduce crosstalk or oversmoothing together.
+**Phase 1 — Foundation and sensitivity scan (~20% of budget)**
+Establish a solid, stable baseline and characterize sensitivity to the
+primary numeric levers.
 
-**Phase 4** (final ~20%): structural improvements
-- Improve calibration-map estimation logic.
-- Add a second robust stage or better residual normalization.
-- Add bounded pose-refinement logic if the docs and baselines suggest a safe
-  route and earlier phases have plateaued.
-- Simplify anything that is no longer carrying its weight.
+- Run the unmodified baseline to get the initial `aggregate_rms`.
+- Sweep `EDGE_EROSION_PX` in {1, 2, 3, 4} — edge exclusion has outsized
+  impact when phase singularities are present.
+- Sweep `FEATHER_WIDTH` in {0.10, 0.20, 0.30} — too much feather degrades
+  resolution; too little permits border artifacts.
+- Sweep `sigma_filter` in {0.3, 0.5, 0.7, 1.0, 1.5} — capture the
+  under-smoothing and over-smoothing regimes for calibration.
+- Sweep `lambda_reg` in {1e-7, 1e-6, 1e-5} — too much regularization
+  biases the solve; too little permits ill-conditioning.
+- Record which lever moves `aggregate_rms` most. Lock the rest and
+  concentrate on the highest-impact lever.
 
-Rules:
-- For numeric parameters, try 0.5x and 2x first, then bisect.
-- Record crash and guardrail boundaries in `autoresearch/insights.md`.
-- If 3 consecutive tweaks to the same lever show diminishing returns, lock it.
-- If pose-related changes fail guardrails 3 times, stop forcing pose work and
-  return to calibration / overlap / fusion improvements.
-- If two ideas appear independent, you may combine them in one test, but revert
-  both if the combination regresses.
-- If tuning stops helping, switch from parameter search to algorithmic changes.
+**Phase 2 — Core algorithmic improvements (~30% of budget)**
+With Phase 1 winners fixed, tackle the structural algorithm components.
+
+- **Overlap assembly** — Compare the current pairwise-local assembly against
+  a stronger global clique construction (all observations contributing to
+  all global pixels simultaneously). If switching to a clique, ensure row
+  weighting still downweights edge pixels.
+- **Robust loss schedule** — Try increasing IRLS iterations from 5 to 8–10.
+  If stable, experiment with a two-stage schedule: start with Huber, then
+  switch to Tukey/ redescending after the third iteration. The switch point
+  matters—too early causes instability, too late misses gains.
+- **Calibration gauge handling** — Add or remove specific gauge modes
+  (e.g., keep piston+tip+tilt; test adding defocus or astigmatism to the
+  projection set). Test whether projecting out 4 modes vs. 5 modes changes
+  the RMS meaningfully.
+- **Calibration smoothing adaptivity** — Instead of fixed `sigma_filter`,
+  try spatially adaptive smoothing: stronger smoothing near edges, weaker
+  near overlap centers where signal is strongest.
+
+**Phase 3 — Combination and interaction testing (~30% of budget)**
+Stack the best configurations from Phase 2. Watch for regressions caused by
+interactions:
+
+- Combine the best overlap assembly with the best calibration handling.
+- Combine the best fusion weights with the best robust loss schedule.
+- Verify that combining two independently good changes does not regress RMS.
+  If it does, one of the two is an overfit to its isolated test conditions.
+- If pose refinement is attempted, apply it only to observation center
+  offsets (not mask resampling) and bound corrections to ±0.5 pixels.
+  Revert immediately if `observed_support_mask` changes or RMS regresses.
+
+**Phase 4 — Structural exploration (~20% of budget)**
+Only if Phases 1–3 have genuinely plateaued (fewer than 0.5% RMS
+improvement across 5 consecutive experiments), attempt one of:
+
+- Switch to a different calibration strategy: CS vs. SC vs. full SIAC
+  alternating. Empirically determine which operational order fits this
+  scenario's noise profile.
+- Implement biconvex lifting (SparseLift): reformulate the joint
+  calibration-surface problem as X := xz^T and solve L1,2 convex
+  optimization. This is a significant structural change—document the
+  hypothesis clearly before testing.
+- Add a graph-SLAM or bundle-adjustment layer for global pose consistency.
+  This is high-risk/high-reward; revert if it fails guardrails or
+  dramatically increases runtime.
+
+### Search rules
+
+- **Numeric sweeps**: for any scalar parameter, try 0.5× and 2× first,
+  then bisect within the promising range.
+- **Lock-and-move**: when a lever shows diminishing returns for 3
+  consecutive tests, lock it and move to the next.
+- **Revert on interaction regression**: if combining two independently good
+  changes regresses RMS, revert both and keep only the best single change.
+- **Pose gate**: if pose-related changes fail evaluator guardrails 3 times
+  in a row, stop forcing pose work and return to calibration / overlap /
+  fusion improvements.
+- **Timeout gate**: runs exceeding 8 minutes wall-clock are treated as
+  failures. Penalize runtime proportionally when evaluating whether an RMS
+  gain is worth a runtime increase.
+- **Simplicity wins**: if two configurations yield equivalent RMS, prefer
+  the simpler one (fewer iterations, fewer parameters, more legible code).
+- **Crash log**: after any crash, record the error signature in
+  `autoresearch/insights.md` and avoid repeating the same structural
+  hypothesis without a targeted fix.
+
+### What not to tune
+
+- The return type, `ReconstructionSurface` schema, and metadata keys.
+- The scenario file or evaluator script.
+- Any baseline file in `src/stitching/editable/`.
+- The `CandidateStitcher.reconstruct(...)` signature.
+- `observed_support_mask` semantics (the evaluator requires it to
+  match physical support of the original observations).
