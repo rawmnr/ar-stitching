@@ -8,7 +8,7 @@ from scipy import ndimage
 from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertureObservation
 
 EDGE_EROSION_PX = 1
-FEATHER_WIDTH = 0.05
+FEATHER_WIDTH = 0.04
 SOLVE_FEATHER_WIDTH = 0.70
 sigma_filter = 1.346
 n_irls = 1
