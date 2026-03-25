@@ -10,8 +10,8 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 EDGE_EROSION_PX = 1
 FEATHER_WIDTH = 0.05
 SOLVE_FEATHER_WIDTH = 0.495
-sigma_filter = 0.9
-n_irls = 8
+sigma_filter = 1.4
+n_irls = 1
 n_siac = 5
 
 class CandidateStitcher:
@@ -109,7 +109,7 @@ class CandidateStitcher:
                 oth_xn = xn_vals[j+1]
                 oth_yn = yn_vals[j+1]
                 oth_r = r_idx_vals[j+1]
-                row_weights.append(0.5 * (solve_w_vals[j] + solve_w_vals[j + 1]))
+                row_weights.append(np.sqrt(solve_w_vals[j] * solve_w_vals[j + 1]))
                 
                 rows_a.extend([row_count] * 3)
                 cols_a.extend([ref_o * n_params + k for k in range(3)])
@@ -174,7 +174,7 @@ class CandidateStitcher:
             
         Constraint = sp.csr_matrix((C_data, (C_rows, C_cols)), shape=(c_idx, n_obs * n_params + n_R_pixels))
         
-        lambda_reg = 1e-6
+        lambda_reg = 2e-5
         
         robust_weights = np.ones(row_count, dtype=float)
         x = np.zeros(n_obs * n_params + n_R_pixels, dtype=float)
@@ -222,7 +222,7 @@ class CandidateStitcher:
             R_map_new = self._estimate_reference_map(observations, fused_z, fused_mask, nuisances, tile_shape, master_mask)
             
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
-            R_map = 0.6 * R_map + 0.4 * R_map_new
+            R_map = 0.75 * R_map + 0.25 * R_map_new
             
             if ref_delta < 1e-5:
                 break
