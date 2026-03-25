@@ -10,11 +10,11 @@ from stitching.contracts import ReconstructionSurface, ScenarioConfig, SubApertu
 EDGE_EROSION_PX = 1
 FEATHER_WIDTH = 0.04
 SOLVE_FEATHER_WIDTH = 0.51
-sigma_filter = 0.8
+sigma_filter = 1.346
 CALIBRATION_BLOCK = 1
 CALIBRATION_SMOOTH_SIGMA = 0.75
 n_irls = 1
-n_siac = 16
+n_siac = 20
 POSE_SHIFT_STEPS = (-0.5, 0.0, 0.5)
 
 class CandidateStitcher:
