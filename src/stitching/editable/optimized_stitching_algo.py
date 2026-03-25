@@ -222,7 +222,7 @@ class CandidateStitcher:
             R_map_new = self._estimate_reference_map(observations, fused_z, fused_mask, nuisances, tile_shape, master_mask)
             
             ref_delta = float(np.max(np.abs(R_map_new - R_map)))
-            R_map = 0.75 * R_map + 0.25 * R_map_new
+            R_map = 0.70 * R_map + 0.30 * R_map_new
             
             if ref_delta < 1e-5:
                 break
