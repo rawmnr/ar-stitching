@@ -256,7 +256,7 @@ class CandidateStitcher:
             )
             nuisances = self._refine_nuisances(observations, fused_z, fused_mask, R_map, tile_shape, nuisances)
 
-        R_map = self._project_degenerate_modes(R_map, master_mask)
+        # R_map = self._project_degenerate_modes(R_map, master_mask)
 
         sum_z = np.zeros(global_shape, dtype=float)
         count = np.zeros(global_shape, dtype=float)
