@@ -12,7 +12,7 @@ FEATHER_WIDTH = 0.04
 SOLVE_FEATHER_WIDTH = 0.70
 sigma_filter = 1.346
 n_irls = 1
-n_siac = 6
+n_siac = 7
 
 class CandidateStitcher:
     def reconstruct(
