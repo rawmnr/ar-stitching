@@ -15,42 +15,62 @@ evaluate exactly one candidate file across a fixed multi-scenario suite, and
 print a small parseable metric block plus per-scenario diagnostics. Once the
 loop starts, that evaluator is read-only.
 
-## Current Situation
+## Evaluation Protocol
 
-The previously optimized basin was tuned mainly on
-`scenarios/s17_highres_circular.yaml`. The new objective is to preserve that
-performance while avoiding regressions on nearby variants that stress:
+### 1. Verification Suite
+The standard verification suite consists of 5 scenarios:
+- `scenarios/s17_highres_circular.yaml`: Baseline circular pupil, 256x256.
+- `scenarios/s17_highres_high_overlap.yaml`: High overlap (0.35).
+- `scenarios/s17_highres_low_overlap.yaml`: Low overlap (0.15).
+- `scenarios/s17_highres_square.yaml`: Square detector pupil, high overlap.
+- `scenarios/s17_lowres_circular.yaml`: Low resolution grid (128x128), 64x64 tiles.
 
-- lower spatial resolution;
-- square instead of circular pupils;
-- lower overlap;
-- higher overlap.
+### 2. Generalizability Rules
+The algorithm MUST derive resolution-dependent settings from the geometry:
+- `sigma_filter` = clip((min(tile_shape) / c_sigma) / sqrt(max(redundancy, 1.0) / 3.0), 0.8, 3.0) (default `c_sigma=110.0`).
+- `edge_erosion_px` = max(1, min(tile_shape) // 100).
+- `calibration_bp_sigma` = max(0.3, min(tile_shape) / 256).
+- `calibration_mf_min_obs` = max(3, int(n_obs * 0.35)).
 
-Interpretation:
+Do NOT hardcode any smoothing sigma, erosion, or gate threshold as a constant.
 
-- low-order performance on the original S17 case is already reasonably strong;
-- the remaining work is now robustness, not just squeezing one more marginal
-  gain out of a single configuration;
-- changes that improve one scenario by overfitting the scan geometry or pupil
-  shape are now regressions if they damage the rest of the suite;
-- detector-frame calibration separation and stable gauge handling remain the
-  most plausible high-value directions.
+### 3. Convergence-Based Loops
+All alternating refinement loops (SIAC) MUST use convergence criteria:
+- Primary stop: absolute change in calibration map < `siac_convergence_tol`.
+- Secondary stop: relative stagnation detection (5 iterations with <1% change).
+- Timeout: `max_siac_iter` as a safety guard.
 
-Established negative results for the current code line:
+### 4. Batch Evaluation & Overrides
+The candidate supports config overrides via the `STITCH_CONFIG` environment variable (JSON dictionary).
+Use this to test multiple hyperparameters in parallel or to perform sensitivity analysis.
 
-- final-surface HF split fusion regressed by about `0.13-0.17` nm;
-- normalized convolution for calibration smoothing regressed;
-- naive 6-parameter nuisance expansion caused gauge blowup (`~12.55` nm);
-- per-step detector mode projection regressed to roughly `1.09` nm;
-- reducing calibration smoothing in the earlier shallow-SIAC regime regressed;
-- median-filter calibration refinement regressed.
+Example:
+```bash
+STITCH_CONFIG='{"nuisance_reg_lambda": 15.0, "c_sigma": 80.0}' uv run autoresearch/eval_multi_scenario.py ...
+```
 
-Working conclusion:
+### Sweep Protocol (fast iteration)
 
-- the HF residual is likely upstream of the final fusion rule;
-- the detector-fixed calibration map is still the most plausible missing model;
-- once deep SIAC (`n_siac=96`) started converging, the old shallow-regime
-  sigma conclusions stopped being decisive.
+When testing scalar hyperparameters, DO NOT edit the code repeatedly.
+Instead, use STITCH_CONFIG overrides to sweep values in a single session:
+
+1. Make ONE structural code change and commit.
+2. Sweep hyperparameters via env var on ONE fast scenario:
+   ```bash
+   for cs in 75 80 82.5 85 90; do
+     STITCH_CONFIG="{\"c_sigma\":$cs}" uv run autoresearch/eval_s17_single.py \
+       --scenario scenarios/s17_highres_square.yaml 2>/dev/null | grep aggregate_rms
+   done
+   ```
+3. Pick the best value, update the default in StitchingConfig.
+4. Validate on the full 5-scenario suite.
+5. Log the FULL suite result in results.tsv.
+
+## Review Criteria
+- **accepted_all**: Must be 1.
+- **aggregate_rms**: Target < 1.0 nm.
+- **Worst-case RMS**: Must be < 1.5 nm on low-overlap scenarios.
+- **Generalization**: No regression allowed when switching between circular and square pupils.
 
 ## Setup
 

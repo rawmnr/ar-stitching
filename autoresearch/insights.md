@@ -78,6 +78,8 @@
 - raw MF calibration injection from the averaged residual map regressed unless the gain was kept very small
 - loosening the MF gate from `min_obs=8` to `min_obs=6` reopened too much contaminated structure and regressed badly
 - variance gating for MF injection did not beat the simpler count gate
+- the current refactor with basis-aware projection and `c_sigma=110.0`, `lambda=15.0`, `sigma_floor=0.8` improved the circular baseline to `1.0767`, the low-res circular case to `1.4686`, and the low-overlap case to `1.4812`; the full 5-scenario aggregate was `1.1239` with `57.1s` total runtime
+- the main runtime cost is now deep SIAC convergence in the square and high-overlap cases (`~175` and `~25` iterations respectively), not the circular baseline
 - late-iteration de-damping of `R_map` updates regressed
 - raw phase-correlation pose refinement catastrophically failed (`~14.9` nm RMS, rejected)
 - conservative gradient-domain local pose refinement was safe but completely inert
@@ -98,6 +100,7 @@
 - the most useful calibration change so far is not "add more HF after averaging"; it is "extract detector MF per observation, then average those detector-space MF pieces"
 - this new MF path produced a real but still modest HF improvement:
   Zernike >36 residual moved from `~0.845` in the old basin to `~0.8373` in the current best
+- the basis-aware detector-mode projection fix is now active in the code path, so the square-pupil nuisance basis no longer projects through the wrong radial low-order modes
 - most of the total RMS gain still comes from low-order cleanup, so the project remains fundamentally HF-limited
 - pose is not the active bottleneck in the current implementation:
   the scenario injects whole-pixel pose error scales, but both coarse and fine pose searches failed to move the accepted metric once calibration was improved
